@@ -97,7 +97,7 @@ class LineFollower:
             error = cx - cropped_image.shape[1] / 2
 
             self.move_forward(error)
-        
+
             # Update the timestamp when the line was last detected
             self.last_line_detection_time = time()
         else:
@@ -118,4 +118,5 @@ if __name__ == '__main__':
         rospy.spin()
     except rospy.ROSInterruptException:
         pass
+
 
