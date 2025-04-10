@@ -1,122 +1,165 @@
 #!/usr/bin/env python3
+
 import rospy
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge, CvBridgeError
 import cv2
+import cv_bridge
+from sensor_msgs.msg import Image, CameraInfo, LaserScan
+from std_msgs.msg import Header, ColorRGBA
+from geometry_msgs.msg import Twist, Point
+from visualization_msgs.msg import Marker
+from nav_msgs.msg import Odometry
 import numpy as np
-from geometry_msgs.msg import Twist
-from time import time
+import time
 
-class LineFollower:
+class Follower:
     def __init__(self):
-        rospy.init_node('line_follower')
-        self.bridge = CvBridge()
+        self.node_name = "rosbot_black_line_follower"
+        rospy.init_node(self.node_name)
+        self.bridge = cv_bridge.CvBridge()
+
         self.image_sub = rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
-        self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-        self.twist = Twist()
+        self.rplidar_sub = rospy.Subscriber("/scan", LaserScan, self.lidar_callback)
+        self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+        self.speed = Twist()
+        self.last_seen_angular_speed = 0
+        self.front_object = False
+        self.object_detection = False
+        self.rate = rospy.Rate(10)
+        self.time_thres = 3
 
-        # Angular velocity limits
-        self.min_angular_vel = -0.3
-        self.max_angular_vel = 0.3
+        # RViz Marker
+        self.marker_pub = rospy.Publisher('/visualisation_marker', Marker, queue_size=1000)
+        self.traveled_path_marker = self.create_marker('traveled_path')
+        self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
+        self.current_position = Point()
 
-        # For 90-degree turns
-        self.turning_vel_90 = 0.5
+    def odom_callback(self, msg):
+        self.current_position.x = msg.pose.pose.position.x
+        self.current_position.y = msg.pose.pose.position.y
+        self.current_position.z = 0.2
+        self.traveled_path_marker.points.append(self.current_position)
+        self.marker_pub.publish(self.traveled_path_marker)
+        self.rate.sleep()
 
-        # Flags and state
-        self.is_turning = False
-        self.is_following_line = False
-        self.last_line_detection_time = time()
+    def create_marker(self, ns):
+        marker = Marker()
+        marker.header.frame_id = 'base_link'
+        marker.type = marker.LINE_STRIP
+        marker.action = marker.ADD
+        marker.ns = ns
+        marker.scale.x = 0.2
+        marker.scale.y = 0.1
+        marker.scale.z = 0.1
+        marker.color.r = 0.4
+        marker.color.g = 0.4
+        marker.color.b = 0.4
+        marker.color.a = 1.0
+        marker.pose.orientation.w = 1.0
+        return marker
 
-        # Timeout for detecting loss of line
-        self.max_time_without_line_detection = 1.5
-
-        # Margin for detecting sharp turns (as a % of width)
-        self.turn_margin = 0.35  # i.e. 35% from left or right edge
-
-    def move_forward(self, error):
-        self.twist.linear.x = 0.1  # Forward speed
-        self.twist.angular.z = -float(error) / 100  # Proportional control
-        self.twist.angular.z = max(self.min_angular_vel, min(self.max_angular_vel, self.twist.angular.z))
-
-        self.is_turning = False
-        self.is_following_line = True
-        print("Following line. Error:", error)
-
-    def stop_robot(self):
-        self.twist.linear.x = 0.0
-        self.twist.angular.z = 0.0
-        self.cmd_vel_pub.publish(self.twist)
-        self.is_turning = True
-        self.is_following_line = False
-        print("Robot stopped (no line detected)")
-
-    def turn(self, direction):
-        self.twist.linear.x = 0.0
-        self.twist.angular.z = self.turning_vel_90 if direction == 'left' else -self.turning_vel_90
-        self.is_turning = True
-        print("Turning", direction)
-
-    def image_callback(self, msg):
-        try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except CvBridgeError as e:
-            print(e)
+    def lidar_callback(self, msg):
+        current_time = rospy.Time.now()
+        msg_age = current_time - msg.header.stamp
+        if msg_age.to_sec() > self.time_thres:
+            rospy.loginfo("Ignoring outdated LIDAR data")
             return
 
-        height, width, _ = cv_image.shape
-        crop_height = height // 2
-        cropped_image = cv_image[crop_height:, :]
+        ranges_len = len(msg.ranges)
+        left_laser = msg.ranges[int(ranges_len*0.10):int(ranges_len*0.15)]
+        right_laser = msg.ranges[int(ranges_len*0.85):int(ranges_len*0.90)]
+        middle_laser1 = msg.ranges[int(ranges_len*0):int(ranges_len*0.05)]
+        middle_laser2 = msg.ranges[int(ranges_len*0.95):int(ranges_len)]
+        middle_laser_min = min(min(middle_laser1), min(middle_laser2))
+        right_min = min(right_laser)
+        left_min = min(left_laser)
 
-        # Convert to grayscale
-        gray = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2GRAY)
-
-        # Threshold for black (adjust 50 if needed)
-        _, thresh = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY_INV)
-
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        line_contour = None
-        max_area = 0
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > 500:
-                x, y, w, h = cv2.boundingRect(cnt)
-                aspect_ratio = float(w) / h if h > 0 else 0
-                if 2 < aspect_ratio < 10:  # Adjust as needed
-                    if area > max_area:
-                        max_area = area
-                        line_contour = cnt
-
-        if line_contour is not None:
-            M = cv2.moments(line_contour)
-            if M['m00'] != 0:
-                cx = int(M['m10'] / M['m00'])
-
-                # Turn detection thresholds
-                left_margin = width * self.turn_margin
-                right_margin = width * (1 - self.turn_margin)
-
-                if cx < left_margin:
-                    self.turn('left')
-                elif cx > right_margin:
-                    self.turn('right')
-                else:
-                    error = cx - width / 2
-                    self.move_forward(error)
-
-                self.last_line_detection_time = time()
+        if right_min < 0.18 and left_min < 0.18:
+            self.speed.angular.z = 0.0
+            self.speed.linear.x = -0.1
+            self.front_object = True
+            self.object_detection = True
+        elif left_min < 0.18:
+            self.speed.angular.z = -0.3
+            self.speed.linear.x = 0
+            self.object_detection = True
+        elif right_min < 0.18:
+            self.speed.angular.z = 0.3
+            self.speed.linear.x = 0
+            self.object_detection = True
+        elif 0.18 > middle_laser_min > 0:
+            self.speed.angular.z = 0.0
+            self.speed.linear.x = -0.1
+            self.front_object = True
+            self.object_detection = True
+        elif 0.2 > middle_laser_min > 0.18:
+            self.front_object = True
+            self.object_detection = True
+            self.speed.linear.x = 0.0
+            self.cmd_vel_pub.publish(self.speed)
+            time.sleep(1)
+            self.speed.angular.z = 0.3
+            self.speed.linear.x = 0.0
+            count = 0
+            while count < 100:
+                count += 1
+                self.cmd_vel_pub.publish(self.speed)
+                self.rate.sleep()
         else:
-            if self.is_following_line and time() - self.last_line_detection_time > self.max_time_without_line_detection:
-                self.stop_robot()
+            self.object_detection = False
+            self.front_object = False
 
-        self.cmd_vel_pub.publish(self.twist)
+        self.cmd_vel_pub.publish(self.speed)
+
+    def image_callback(self, msg):
+        current_time = rospy.Time.now()
+        msg_age = current_time - msg.header.stamp
+        if msg_age.to_sec() > self.time_thres:
+            rospy.loginfo("Ignoring outdated IMAGE data")
+            return
+
+        image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+        # Detect black line
+        lower_black = np.array([0, 0, 0], dtype=np.uint8)
+        upper_black = np.array([180, 255, 50], dtype=np.uint8)
+        mask = cv2.inRange(hsv_image, lower_black, upper_black)
+        res = cv2.bitwise_and(image, image, mask=mask)
+        res_gray = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
+
+        height, width = res_gray.shape
+        res_gray[:int(height * 0.5), :] = 0  # Remove top half
+
+        res_edges = cv2.Canny(res_gray, 70, 150)
+
+        left_half = res_gray[:, :int(width * 0.60)]
+        right_half = res_gray[:, int(width * 0.40):]
+        left_black_pixels = cv2.countNonZero(left_half)
+        right_black_pixels = cv2.countNonZero(right_half)
+        total_black_pixels = left_black_pixels + right_black_pixels
+
+        if total_black_pixels > 0:
+            turn_ratio = ((left_black_pixels - right_black_pixels) / total_black_pixels) / 2
+            max_turn_speed = 0.5
+            turn_speed = max_turn_speed * turn_ratio
+
+        if not self.object_detection and not self.front_object:
+            if total_black_pixels > 2000:
+                self.speed.angular.z = turn_speed
+                self.last_seen_angular_speed = turn_speed
+                self.speed.linear.x = 0.15
+            else:
+                self.speed.angular.z = 0.3 if self.last_seen_angular_speed > 0 else -0.3
+                self.speed.linear.x = 0
+            self.cmd_vel_pub.publish(self.speed)
+
+        # 👁️ Visualization
+        cv2.imshow("Original Image", image)
+        cv2.imshow("Black Mask", mask)
+        cv2.imshow("Masked Image (res)", res)
+        cv2.imshow("Edge Detection", res_edges)
         cv2.waitKey(3)
 
 if __name__ == '__main__':
-    try:
-        follower = LineFollower()
-        rospy.spin()
-    except rospy.ROSInterruptException:
-        pass
+    follower = Follower()
+    rospy.spin()
