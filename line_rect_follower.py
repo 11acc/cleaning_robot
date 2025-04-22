@@ -22,6 +22,13 @@ class LineFollower:
         self.upper_black     = np.array([180, 255, 100])  # Black upper bound
         self.min_contour_area = 20  # Reduced to detect thinner lines
         
+        # Rectangle detection parameters
+        self.min_rect_ratio = 3.0   # Min ratio of length/width for rectangle
+        self.max_rect_ratio = 20.0  # Max ratio of length/width for rectangle
+        self.min_rect_area = 50     # Minimum area for rectangle detection
+        self.max_rect_area = 5000   # Maximum area for rectangle detection
+        self.rect_approx_epsilon = 0.02  # Epsilon for polygon approximation
+        
         # Increase field of view by using larger portion of image
         self.roi_height_frac  = 0.40  # bottom 40% 
         self.roi_width_frac   = 0.80  # center 80%
@@ -87,40 +94,113 @@ class LineFollower:
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
+    # ─────────────── rectangle detection helpers ───────────────
+    def filter_rectangle_contours(self, contours):
+        """Filter contours to find rectangular shapes like tape lines"""
+        rectangle_contours = []
+        
+        for contour in contours:
+            # Skip contours that are too small or too large
+            area = cv2.contourArea(contour)
+            if area < self.min_rect_area or area > self.max_rect_area:
+                continue
+                
+            # Approximate the contour to simplify shape
+            perimeter = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, self.rect_approx_epsilon * perimeter, True)
+            
+            # Get rotated rectangle that fits the contour
+            rect = cv2.minAreaRect(contour)
+            box = cv2.boxPoints(rect)
+            box = np.int0(box)
+            
+            # Calculate the ratio of width to height for this rectangle
+            width = rect[1][0]
+            height = rect[1][1]
+            
+            # Avoid division by zero
+            if width == 0 or height == 0:
+                continue
+                
+            # The ratio should always be >= 1, so use max/min
+            rect_ratio = max(width, height) / min(width, height)
+            
+            # Check if the contour is roughly rectangular by verifying:
+            # 1. It has about 4 vertices (tape lines might not be perfect rectangles)
+            # 2. Has appropriate aspect ratio for a line segment
+            # 3. Fills most of its bounding box (solidity)
+            
+            # Calculate solidity - area of contour / area of convex hull
+            hull = cv2.convexHull(contour)
+            hull_area = cv2.contourArea(hull)
+            solidity = float(area) / hull_area if hull_area > 0 else 0
+            
+            # A line segment should be rectangular with a high ratio and good solidity
+            is_line_shape = (len(approx) >= 4 and len(approx) <= 8 and 
+                            self.min_rect_ratio <= rect_ratio <= self.max_rect_ratio and
+                            solidity > 0.8)
+                            
+            if is_line_shape:
+                # Store the contour along with its properties for later use
+                rectangle_contours.append({
+                    'contour': contour,
+                    'box': box,
+                    'rect': rect,
+                    'ratio': rect_ratio,
+                    'area': area
+                })
+        
+        return rectangle_contours
+
     # ─────────────── line detection helpers ───────────────
-    def detect_line_orientation(self, contour, roi):
+    def detect_line_orientation(self, contour_info, roi):
         """Determine if line is vertical, horizontal, or turning"""
-        # Fit a line to the contour
+        contour = contour_info['contour']
+        rect = contour_info['rect']
+        
+        # Extract angle and size from the rotated rectangle
+        center, (width, height), angle = rect
+        
+        # Adjust angle to be between 0 and 180 degrees
+        if angle < -45:
+            angle += 90
+            width, height = height, width
+            
+        # Convert from OpenCV angle (CW from x-axis) to standard angle
+        angle = -angle
+        
+        # Draw the rotated rectangle for visualization
+        box = contour_info['box']
+        cv2.drawContours(roi, [box], 0, (0, 255, 255), 2)
+        
+        # Fit a line to the contour for added stability
         [vx, vy, x, y] = cv2.fitLine(contour, cv2.DIST_L2, 0, 0.01, 0.01)
         
-        # Calculate the angle in degrees - convert numpy values to float
-        angle = float(np.arctan2(vy[0], vx[0]) * 180 / np.pi)
-        
-        # Get bounding rect to check aspect ratio
-        x, y, w, h = cv2.boundingRect(contour)
-        aspect_ratio = float(w) / h if h > 0 else 999
+        # Calculate the angle in degrees from the fitted line
+        fitted_angle = float(np.arctan2(vy[0], vx[0]) * 180 / np.pi)
         
         # Draw line direction for visualization
         lefty = int((-x * vy[0] / vx[0]) + y) if vx[0] != 0 else y
         righty = int(((roi.shape[1] - x) * vy[0] / vx[0]) + y) if vx[0] != 0 else y
         cv2.line(roi, (roi.shape[1]-1, righty), (0, lefty), (255, 0, 255), 2)
         
-        # Display angle and aspect ratio for debugging
+        # Display angle and ratio for debugging
         cv2.putText(roi, f"Angle: {angle:.1f}", (10, 90), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.putText(roi, f"Ratio: {aspect_ratio:.1f}", (10, 110), 
+        cv2.putText(roi, f"Ratio: {contour_info['ratio']:.1f}", (10, 110), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
-        # Check orientation based on angle and aspect ratio
-        if aspect_ratio > 1.5:  # Wider than tall - likely horizontal
-            orientation = "HORIZONTAL"
-        elif aspect_ratio < 0.67:  # Taller than wide - likely vertical
-            orientation = "VERTICAL"
-        else:
-            # For square-ish contours, check the angle
-            if -30 <= angle <= 30 or 150 <= abs(angle) <= 180:
+        # Determine orientation based on the rotated rectangle
+        # If width > height, it's more horizontal, otherwise more vertical
+        if width > height:
+            # Horizontal-ish rectangle
+            if -30 <= angle <= 30 or abs(angle) >= 150:
                 orientation = "HORIZONTAL"
-            elif 60 <= abs(angle) <= 120:
+            else:
+                orientation = "TURNING"
+        else:
+            # Vertical-ish rectangle
+            if 60 <= abs(angle) <= 120:
                 orientation = "VERTICAL"
             else:
                 orientation = "TURNING"
@@ -128,12 +208,12 @@ class LineFollower:
         return orientation, angle
 
     # ─────────────── movement control functions ───────────────
-    def calculate_movement(self, contour, cx, cy, roi_center, roi):
+    def calculate_movement(self, contour_info, cx, cy, roi_center, roi):
         """Calculate movement parameters based on line analysis"""
         roi_height = roi.shape[0]
         
-        # Detect line orientation
-        orientation, angle = self.detect_line_orientation(contour, roi)
+        # Detect line orientation using the rectangle properties
+        orientation, angle = self.detect_line_orientation(contour_info, roi)
         
         # Calculate basic error (distance from center)
         error = cx - roi_center
@@ -351,35 +431,43 @@ class LineFollower:
         # ••• find contours in the mask •••
         contours, _ = cv2.findContours(mask_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        # ••• filter contours to find rectangular shapes (tape lines) •••
+        rectangle_contours = self.filter_rectangle_contours(contours)
+        
+        # Create visualization image showing rectangle detection
+        rect_vis = roi.copy()
+        for rect_info in rectangle_contours:
+            cv2.drawContours(rect_vis, [rect_info['box']], 0, (0, 255, 0), 2)
+        cv2.imshow("Rectangle Detection", rect_vis)
+
         # ••• process line contours if found •••
-        if contours:
-            # Filter out small contours
-            valid_contours = [c for c in contours if cv2.contourArea(c) > self.min_contour_area]
+        if rectangle_contours:
+            # Sort by area (largest first)
+            rectangle_contours.sort(key=lambda x: x['area'], reverse=True)
             
-            if valid_contours:
-                # Find the largest contour (assumed to be the line)
-                largest_contour = max(valid_contours, key=cv2.contourArea)
+            # Use the largest rectangle contour
+            largest_rect_info = rectangle_contours[0]
+            largest_contour = largest_rect_info['contour']
+            
+            # Calculate moments to find centroid
+            M = cv2.moments(largest_contour)
+            
+            if M['m00'] > 0:  # Avoid division by zero
+                # Get centroid coordinates
+                cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
                 
-                # Calculate moments to find centroid
-                M = cv2.moments(largest_contour)
-                
-                if M['m00'] > 0:  # Avoid division by zero
-                    # Get centroid coordinates
-                    cx = int(M['m10'] / M['m00'])
-                    cy = int(M['m01'] / M['m00'])
-                    
-                    # Draw bounding box and center
-                    cv2.drawContours(roi, [largest_contour], -1, (0, 255, 0), 2)
-                    cv2.circle(roi, (cx, cy), 5, (0, 0, 255), -1)
+                # Draw center
+                cv2.circle(roi, (cx, cy), 5, (0, 0, 255), -1)
 
-                    # Draw the center of the cropped image
-                    roi_center = roi.shape[1] // 2
-                    cv2.line(roi, (roi_center, 0), (roi_center, roi.shape[0]), (255, 0, 0), 2)
+                # Draw the center of the cropped image
+                roi_center = roi.shape[1] // 2
+                cv2.line(roi, (roi_center, 0), (roi_center, roi.shape[0]), (255, 0, 0), 2)
 
-                    # Calculate movement based on contour analysis
-                    self.calculate_movement(largest_contour, cx, cy, roi_center, roi)
+                # Calculate movement based on contour analysis
+                self.calculate_movement(largest_rect_info, cx, cy, roi_center, roi)
         else:
-            # No valid contours found - handle line loss
+            # No valid rectangle contours found - handle line loss
             if time() - self.last_line_detection_time > self.max_time_without_line_detection:
                 if self.state != "LOST" and self.robot_enabled:
                     self.state = "LOST"
