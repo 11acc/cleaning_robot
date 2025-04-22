@@ -38,6 +38,7 @@ class LineFollower:
         
         print("Press 'r' to toggle robot movement. Currently DISABLED.")
         print("Press 'q' to quit the program.")
+        print("Line detection debug info will show regardless of robot movement status.")
 
     def keyboard_listener(self):
         """Listen for keyboard commands in a separate thread"""
@@ -63,16 +64,10 @@ class LineFollower:
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-    def move_forward(self, error, center_x, image_center):
-        if not self.robot_enabled:
-            self.twist.linear.x = 0.0
-            self.twist.angular.z = 0.0
-            return
-            
-        self.twist.linear.x = 0.1
+    def calculate_movement(self, error, center_x, image_center):
+        """Calculate movement but don't apply it unless enabled"""
         angular_z = -float(error) / 100
         angular_z = max(self.min_angular_vel, min(self.max_angular_vel, angular_z))
-        self.twist.angular.z = angular_z
 
         direction = "centered"
         if error > 20:
@@ -81,6 +76,15 @@ class LineFollower:
             direction = "tilting left — correcting right"
 
         print(f"[DEBUG] True Line Center: {center_x}, Image Center: {image_center}, Error: {error:.2f}, Turning: {direction}, Angular z: {angular_z:.2f}")
+        
+        # Only update movement commands if robot is enabled
+        if self.robot_enabled:
+            self.twist.linear.x = 0.1
+            self.twist.angular.z = angular_z
+        else:
+            self.twist.linear.x = 0.0
+            self.twist.angular.z = 0.0
+            
         self.is_turning = False
         self.is_following_line = True
 
@@ -136,9 +140,9 @@ class LineFollower:
             cropped_center = cropped_image.shape[1] // 2
             cv2.line(cropped_image, (cropped_center, 0), (cropped_center, cropped_image.shape[0]), (255, 0, 0), 2)
 
-            # Calculate error and move
+            # Calculate error and movement - always calculate and print, but only move if enabled
             error = line_center_x - cropped_center
-            self.move_forward(error, line_center_x, cropped_center)
+            self.calculate_movement(error, line_center_x, cropped_center)
             self.last_line_detection_time = time()
         else:
             if self.is_following_line and (time() - self.last_line_detection_time > self.max_time_without_line_detection):
