@@ -96,6 +96,53 @@ class LineFollower:
         self.is_following_line = False
         print("[DEBUG] Robot stopped — line lost")
 
+    def find_vertical_part_of_line(self, mask):
+        """Find the part of the line that's most vertical and closest to the bottom center"""
+        height, width = mask.shape
+        bottom_center_x = width // 2
+        
+        # Define a region of interest in the bottom portion of the image
+        roi_height = int(height * 0.6)  # Use bottom 60% of the image
+        roi = mask[height - roi_height:height, :]
+        
+        # Find contours in the ROI
+        contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return None, None, None, None
+            
+        # Choose the contour closest to the bottom center
+        best_contour = None
+        min_distance = float('inf')
+        
+        for contour in contours:
+            # Get the center of the contour
+            M = cv2.moments(contour)
+            if M["m00"] == 0:
+                continue
+            
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"]) + (height - roi_height)  # Adjust y coordinate for ROI offset
+            
+            # Calculate distance to bottom center
+            distance = abs(cx - bottom_center_x)
+            
+            # If this contour is the closest so far and has reasonable area
+            contour_area = cv2.contourArea(contour)
+            if distance < min_distance and contour_area > 30:  # Minimum size threshold
+                min_distance = distance
+                best_contour = contour
+        
+        if best_contour is None:
+            return None, None, None, None
+            
+        # Get bounding rectangle
+        x, y, w, h = cv2.boundingRect(best_contour)
+        # Adjust y for the ROI offset
+        y = y + (height - roi_height)
+        
+        return x, y, w, h
+
     def image_callback(self, msg):
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -121,42 +168,49 @@ class LineFollower:
         lower_black = np.array([0, 0, 0])
         upper_black = np.array([180, 255, 50])
         mask = cv2.inRange(hsv, lower_black, upper_black)
-
-        # Find contours in the mask
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if contours:
-            # Find the largest contour (assumed to be the line)
-            largest_contour = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(largest_contour)
+        
+        # Create a debug image for visualization
+        debug_image = cropped_image.copy()
+        
+        # Find the vertical part of the line (ignore turns)
+        x, y, w, h = self.find_vertical_part_of_line(mask)
+        
+        if x is not None:
+            # Draw rectangle around the detected vertical part
+            cv2.rectangle(debug_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            
+            # Calculate the center point of the detected line segment
             line_center_x = x + w // 2
             line_center_y = y + h // 2
-
-            # Draw bounding box and center
-            cv2.rectangle(cropped_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.circle(cropped_image, (line_center_x, line_center_y), 5, (0, 0, 255), -1)
-
+            
+            # Draw the center point
+            cv2.circle(debug_image, (line_center_x, line_center_y), 5, (0, 0, 255), -1)
+            
             # Draw the center of the cropped image
             cropped_center = cropped_image.shape[1] // 2
-            cv2.line(cropped_image, (cropped_center, 0), (cropped_center, cropped_image.shape[0]), (255, 0, 0), 2)
-
-            # Calculate error and movement - always calculate and print, but only move if enabled
+            cv2.line(debug_image, (cropped_center, 0), (cropped_center, cropped_image.shape[0]), (255, 0, 0), 2)
+            
+            # Calculate error and movement
             error = line_center_x - cropped_center
             self.calculate_movement(error, line_center_x, cropped_center)
             self.last_line_detection_time = time()
         else:
+            # Just draw the center line if no line detected
+            cropped_center = cropped_image.shape[1] // 2
+            cv2.line(debug_image, (cropped_center, 0), (cropped_center, cropped_image.shape[0]), (255, 0, 0), 2)
+            
             if self.is_following_line and (time() - self.last_line_detection_time > self.max_time_without_line_detection):
                 self.stop_robot()
 
         # Add movement status indicator on the image
         status_text = "MOVEMENT: ON" if self.robot_enabled else "MOVEMENT: OFF"
-        cv2.putText(cropped_image, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
+        cv2.putText(debug_image, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                     (0, 255, 0) if self.robot_enabled else (0, 0, 255), 2)
 
         self.cmd_vel_pub.publish(self.twist)
 
         # Show windows
-        cv2.imshow("Line Tracking", cropped_image)
+        cv2.imshow("Line Tracking", debug_image)
         cv2.imshow("Mask", mask)
         cv2.waitKey(3)
 
