@@ -62,6 +62,8 @@ class CombinedNode:
         self.front_distance = float('inf')
         self.left_distance = float('inf')
         self.right_distance = float('inf')
+        self.current_servo_load = 0.0 # servo load
+        self.peg_grabbed = False # Add a flag to track if the peg is grabbed
 
         # --- Yellow Follower Parameters and Variables ---
         self.searching_yellow = True
@@ -92,6 +94,9 @@ class CombinedNode:
         if self.start_pose is None:
             self.start_pose = self.current_pose
             rospy.loginfo(f"Recorded start pose: x={position.x:.2f}, y={position.y:.2f}, yaw={yaw:.2f}")
+    
+    def servo_load_callback(self, load):
+        self.current_servo_load = load.data
 
     def image_callback(self, data):
         try:
@@ -178,15 +183,6 @@ class CombinedNode:
                         self.target_pose = (target_x, target_y)
                         self.searching_yellow = False
                         self.approaching_yellow = True
-
-                        # Check distance from red peg grab location
-                        # x_start, y_start, _ = self.start_pose  # Use red peg location as start
-                        # dist_from_start = math.sqrt((x_robot - x_start)**2 + (y_robot - y_start)**2)
-
-                        # if dist_from_start > self.max_distance_from_red_m:
-                        #     rospy.loginfo("Moved more than 1.5 m from red peg, stopping")
-                        #     self.transition_to_releasing()
-                        #     return
 
             else:
                 # No yellow detected
@@ -298,12 +294,12 @@ class CombinedNode:
         rospy.sleep(2)  # Simulate grabbing
 
         # Check servo load (optional)
-        # if self.current_servo_load > SOME_THRESHOLD:
+        #if self.current_servo_load > SOME_THRESHOLD:
         rospy.loginfo("Peg grabbed, transitioning to MOVING_TO_YELLOW")
         self.transition_to(self.GRABBED)
-        # else:
-        #     rospy.loginfo("Grab failed, retrying")
-        #     self.transition_to(self.POSITIONING)  # Retry positioning
+        #else:
+        #    rospy.loginfo("Grab failed, retrying")
+        #    self.transition_to(self.POSITIONING)  # Retry positioning
 
     def hold_grabbed(self):
         rospy.loginfo("Holding grabbed peg")
