@@ -16,10 +16,8 @@ class LineFollower:
         self.bridge = CvBridge()# Bridge to convert ROS images to OpenCV format
         self.twist = Twist() # Twist message to store movement commands
 
-        # Publisher to send movement commands to the robot
-        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-        # Subscriber to get image data from the robot's camera
-        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)  # Publisher to send movement commands to the robot
+        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback) # Subscribe to image data from the robot's camera
 
         # HSV range for detecting the black line
         self.lower_black = np.array([0, 0, 0])
@@ -37,9 +35,8 @@ class LineFollower:
         rospy.loginfo("Line follower node started, waiting for images...")
 
     def image_callback(self, msg):
-        # Convert ROS image to OpenCV format
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8") # Convert ROS image to OpenCV format
         except Exception as e:
             rospy.logerr("CV Bridge error: %s", e)
             return
@@ -48,8 +45,8 @@ class LineFollower:
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         height, width, _ = cv_image.shape
 
-        # Crop the image to focus on the bottom 20%
-        crop_img = hsv[int(height * 0.8):height, :]
+        # Crop for bottom 10%
+        crop_img = hsv[int(height * 0.9):height, :]
 
         # Apply Gaussian blur to reduce image noise
         blurred = cv2.GaussianBlur(crop_img, (5, 5), 0)
@@ -64,7 +61,7 @@ class LineFollower:
         if contours:
             # Use the largest contour, assuming it’s the line
             largest_contour = max(contours, key=cv2.contourArea)
-            # Ignore small contours (likely noise)
+            # Ignore small contours (noise)
             if cv2.contourArea(largest_contour) > 1000:
                 # Calculate the center of mass of the contour
                 M = cv2.moments(largest_contour)
@@ -115,10 +112,8 @@ class LineFollower:
         rospy.loginfo(f"Image saved: {image_filename}")
 
     def run(self):
-        # Keep the node running
-        rospy.spin()
+        rospy.spin() # Keep the node running until shutdown
 
-# Entry point of the script
 if __name__ == '__main__':
     try:
         node = LineFollower()
