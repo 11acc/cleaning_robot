@@ -99,13 +99,15 @@ class YellowFollower:
 
                     height, width = cv_image.shape[:2]
                     error_x = (cx - width / 2) / (width / 2)
+                    bias = -0.1  # tweak this value as needed
+                    error_x_biased = error_x + bias
 
                     x, y, w, h = cv2.boundingRect(largest_contour)
                     distance = (self.focal_length_px * self.real_yellow_width_m) / w
 
                     if self.current_pose is not None:
                         x_robot, y_robot, yaw_robot = self.current_pose
-                        lateral_offset = error_x * self.real_yellow_width_m
+                        lateral_offset = error_x_biased * self.real_yellow_width_m
                         target_x = x_robot + distance * math.cos(yaw_robot) - lateral_offset * math.sin(yaw_robot)
                         target_y = y_robot + distance * math.sin(yaw_robot) + lateral_offset * math.cos(yaw_robot)
 
