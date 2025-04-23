@@ -139,9 +139,9 @@ class YellowFollower:
                     self.stopped_at_target = True
                     self.returning = True  # Start return after stopping
                 else:
-                    max_speed = 0.15
-                    min_speed = 0.02
-                    slow_down_radius = 0.3
+                    max_speed = 0.25
+                    min_speed = 0.05
+                    slow_down_radius = 0.2
 
                     if dist_to_target < slow_down_radius:
                         speed = min_speed + (max_speed - min_speed) * (dist_to_target / slow_down_radius)
