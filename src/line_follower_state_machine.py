@@ -15,26 +15,26 @@ class LineFollowerSM:
         self.lower_black = np.array([0, 0, 0])
         self.upper_black = np.array([180, 255, 60])
 
-        self.kp           = 1.0 / 450.0   # steering gain during FOLLOW / PREPARE
-        self.linear_speed = 0.06          # m/s during FOLLOW / PREPARE
+        self.kp           = 1.0 / 450.0   # steering gain
+        self.linear_speed = 0.06          # m/s
 
-        self.turn_speed   = 0.35          # rad/s nominal turn rate
-        self.kp_turn      = 1.0 / 300.0   # additional proportional term while centring
-        self.center_tol   = 25            # pixels – "centred" threshold in TURN
+        self.turn_speed   = 0.35          # rad/s
+        self.kp_turn      = 1.0 / 300.0   # tighter → more accurate, looser → faster
+        self.center_tol   = 100  #25      # larger  → crisper centring response
 
-        self.bar_px_thresh  = 2000        # "I see a bar" pixels in top ROI
-        self.line_px_thresh = 1000        # "I see the centre line" pixels in bottom ROI
+        # Visual text stuff
+        self.bar_px_thresh  = 2000
+        self.line_px_thresh = 1000
 
-        # ROI limits (fractions of image height)
+        # ROI limits
         self.top_roi = (0.55, 0.70)       # 55 % – 70 % of rows
         self.bot_roi = (0.88, 1.00)       # 88 % – 100 %
 
-        # Display on by default – set ~debug:=false to suppress windows
         self.debug = rospy.get_param("~debug", True)
 
         # ---------------- State machine -----------------------------------
         self.state          = "FOLLOW"
-        self.turn_direction = "LEFT"      # updated when entering TURN
+        self.turn_direction = "LEFT"
 
         # ---------------- ROS wiring --------------------------------------
         self.bridge  = CvBridge()
@@ -42,31 +42,29 @@ class LineFollowerSM:
         rospy.Subscriber("/camera/color/image_raw", Image, self.image_cb)
 
         self.twist = Twist()
-        rospy.loginfo("Line‑follower state‑machine node started")
+        rospy.loginfo("lv: Line-follower state-machine node started")
 
-    # ---------------------------------------------------------------------
     @staticmethod
     def choose_turn_direction(bar_mask):
-        """Return 'LEFT' if more bar pixels are on the left half, else 'RIGHT'."""
+        # Return 'LEFT' if more bar pixels are on the left half, else 'RIGHT'
         h, w = bar_mask.shape
         left  = cv2.countNonZero(bar_mask[:, : w // 2])
         right = cv2.countNonZero(bar_mask[:, w // 2 :])
         return "RIGHT" if right > left else "LEFT"
 
-    # ---------------------------------------------------------------------
     @staticmethod
     def centroid_x(mask):
-        """Return centroid x of a binary mask, or None if empty."""
+        # Return centroid x of a binary mask, or None if empty
         M = cv2.moments(mask)
         if M["m00"] == 0:
             return None
         return int(M["m10"] / M["m00"])
 
-    # ---------------------------------------------------------------------
     def follow_centre_line(self, line_mask, width):
-        """Proportional steering on bottom-ROI mask."""
+        # Proportional steering on bottom-ROI mask
         cx = self.centroid_x(line_mask)
-        if cx is None:                       # no centroid → creep straight
+        # no centroid → creep straight
+        if cx is None:
             self.twist.linear.x  = 0.02
             self.twist.angular.z = 0.0
             return
@@ -75,7 +73,6 @@ class LineFollowerSM:
         self.twist.linear.x  = self.linear_speed
         self.twist.angular.z = -self.kp * float(error)
 
-    # ---------------------------------------------------------------------
     def image_cb(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -152,11 +149,9 @@ class LineFollowerSM:
             cv2.imshow("mask", mask_full)
             cv2.waitKey(1)
 
-    # ---------------------------------------------------------------------
     def run(self):
         rospy.spin()
 
-# -------------------------------------------------------------------------
 if __name__ == "__main__":
     try:
         LineFollowerSM().run()
