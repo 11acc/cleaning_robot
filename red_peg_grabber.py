@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import rospy
 import cv2
@@ -22,6 +22,16 @@ class RedPegGrabber:
        
         self.state = self.SEARCHING
         self.rate = rospy.Rate(10)  # 10Hz
+        
+        # Timeout tracking
+        self.state_start_time = rospy.Time.now()
+        self.state_timeout = {
+            self.SEARCHING: 20.0,    # 20 seconds to find a red peg
+            self.APPROACHING: 15.0,  # 15 seconds to approach
+            self.POSITIONING: 10.0,  # 10 seconds to position
+            self.GRABBING: 5.0,      # 5 seconds to grab
+            self.GRABBED: 3.0        # 3 seconds in grabbed state
+        }
        
         # Camera subscriber
         self.image_sub = rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
@@ -197,8 +207,9 @@ class RedPegGrabber:
                         cmd.linear.x = 0.1
                    
                     # If close enough to the peg, proceed to positioning
-                    # Using front distance (min of fl and fr)
+                    # Using front distance (min of fl and fr) OR a large enough area of red
                     if self.front_distance < 0.2 or self.red_peg_area > 10000:
+                        rospy.loginfo(f"Transitioning to POSITIONING - Distance: {self.front_distance}, Area: {self.red_peg_area}")
                         self.stop_robot()
                         self.state = self.POSITIONING
            
@@ -227,6 +238,7 @@ class RedPegGrabber:
                             if self.front_distance > 0.1:
                                 cmd.linear.x = 0.05
                             else:
+                                rospy.loginfo(f"Transitioning to GRABBING - Distance: {self.front_distance}")
                                 self.stop_robot()
                                 self.state = self.GRABBING
            
@@ -242,9 +254,11 @@ class RedPegGrabber:
                     else:
                         # Close the gripper to grab the peg
                         self.close_gripper()
+                        rospy.loginfo("Peg grabbed successfully! Transitioning to GRABBED state")
                         self.state = self.GRABBED
                 else:
-                    # Lost sight of the peg, go back to searching
+                    # Lost sight of the peg during final approach
+                    rospy.logwarn("Lost sight of peg during GRABBING phase - reverting to SEARCHING")
                     self.state = self.SEARCHING
            
             elif self.state == self.GRABBED:
