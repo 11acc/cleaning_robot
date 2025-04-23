@@ -22,7 +22,7 @@ class YellowFollower:
         self.twist = Twist()
 
         # State flags
-        self.searching = True
+        self.searching = True  # Ensure this is set to True initially
         self.approaching = False
         self.stopped_at_target = False
         self.returning = False
@@ -142,7 +142,6 @@ class YellowFollower:
                     self.twist.linear.x = 0.0  # stop moving forward
                     self.twist.angular.z = self.search_direction  # Turn left
                     self.cmd_vel_pub.publish(self.twist)
-                    return
                 elif self.approaching:
                     rospy.loginfo("Yellow lost, stopping and returning")
                     print("open gripper")
