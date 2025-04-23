@@ -1,0 +1,4 @@
+<launch>
+    <node pkg="cleaning_robot" type="one_to_rule_them_all.py" name="one_to_rule_them_all" output="screen">
+    </node>
+</launch>
