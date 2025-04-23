@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from tf.transformations import euler_from_quaternion
 import math
+from std_msgs.msg import UInt16, Float64
 
 class YellowFollower:
     def __init__(self):
@@ -18,6 +19,8 @@ class YellowFollower:
         self.image_sub = rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.servo_pub = rospy.Publisher('/servo', UInt16, queue_size=10)
+        self.servo_load_pub = rospy.Publisher('/servoLoad', Float64, queue_size=10)
 
         self.twist = Twist()
 
@@ -28,6 +31,7 @@ class YellowFollower:
         self.returning = False
         self.completed = False
         self.recording_360 = False
+        self.gripper_closed = False #Flag for the gripper
 
         # Parameters
         self.min_contour_area = 500
@@ -49,12 +53,24 @@ class YellowFollower:
         self.start_pose = None
         self.current_pose = None
         self.target_pose = None
+        self.current_servo_load = 0.0
 
         # 360 Scan Data
         self.scan_data = []  # List to store (yaw, mask_area) pairs
         self.start_rotation_time = None
 
         rospy.loginfo("YellowFollower node started...")
+        self.check_gripper_state()#Checking the gripper State
+
+    def check_gripper_state(self):
+        #Here we are checking the initial state of the gripper if it's closed.
+        #check the servoload here if it's closed then only execeute the code
+        if self.current_servo_load > 0.0:#or whatever value is to check if it's closed
+            self.gripper_closed = True #flag is true
+            rospy.loginfo("gripper is closed,Execuiting The Code...")
+        else:
+            rospy.loginfo("Gripper is Opened, Please Close Gripper to Execute Code")
+            rospy.signal_shutdown("Gripper Not Closed")#Shutdown Node so the code doesn't execute.
 
     def odom_callback(self, msg):
         position = msg.pose.pose.position
@@ -68,6 +84,10 @@ class YellowFollower:
 
     def image_callback(self, msg):
         try:
+            if not self.gripper_closed:#Check here if the gripper is closed
+                rospy.logwarn_throttle(10,"Gripper must be closed to begin.")
+                return
+
             if self.completed:
                 self.twist.linear.x = 0
                 self.twist.angular.z = 0
@@ -153,7 +173,7 @@ class YellowFollower:
 
                 if dist_to_target <= self.stop_distance_m +0.05:
                     rospy.loginfo("Reached target zone")
-                    print("open gripper")
+                    self.open_gripper()
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0
                     self.approaching = False
@@ -217,7 +237,6 @@ class YellowFollower:
         self.approaching = True
         rospy.loginfo(f"Best yellow zone found at yaw {best_yaw:.2f}. Target set to x={target_x:.2f}, y={target_y:.2f}")
 
-
     def return_to_start(self):
         if self.current_pose is None or self.start_pose is None:
             rospy.logwarn_throttle(5, "Waiting for odometry data to return to start")
@@ -227,7 +246,6 @@ class YellowFollower:
 
         x_cur, y_cur, yaw_cur = self.current_pose
         x_start, y_start, yaw_start = self.start_pose
-
         dx = x_start - x_cur
         dy = y_start - y_cur
         distance = math.sqrt(dx * dx + dy * dy)
@@ -260,6 +278,13 @@ class YellowFollower:
             self.twist.angular.z = 0
             self.returning = False
             self.completed = True
+
+    def open_gripper(self):
+        self.servo_pub.publish(0)  # Open the gripper
+        self.servo_load_pub.publish(0.0)
+        self.current_servo_load = 0.0
+        rospy.loginfo("Gripper opened")
+        rospy.loginfo(f"Servo Load: {self.current_servo_load}")
 
 if __name__ == '__main__':
     try:
