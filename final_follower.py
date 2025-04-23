@@ -44,8 +44,11 @@ class LineFollower:
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         height, width, _ = cv_image.shape
 
-        # Crop the image to the bottom 20%
-        crop_img = hsv[int(height * 0.80):height, :]
+        # Vertical crop (bottom 20%) and horizontal crop (center 60%)
+        start_row = int(height * 0.80)
+        start_col = int(width * 0.2)
+        end_col = int(width * 0.8)
+        crop_img = hsv[start_row:height, start_col:end_col]
 
         # Apply Gaussian blur to reduce image noise
         blurred = cv2.GaussianBlur(crop_img, (5, 5), 0)
@@ -62,7 +65,8 @@ class LineFollower:
                 M = cv2.moments(largest_contour)
                 if M['m00'] != 0:
                     cx = int(M['m10'] / M['m00'])
-                    error = cx - (width // 2)
+                    adjusted_cx = cx + start_col  # Adjusted for horizontal crop offset
+                    error = adjusted_cx - (width // 2)
 
                     # Apply dead zone logic
                     if abs(error) < 10:
@@ -71,7 +75,7 @@ class LineFollower:
                         angular_z = -float(error) / 250.0  # Adjust sensitivity
 
                     # Set movement commands
-                    self.twist.linear.x = 0.15
+                    self.twist.linear.x = 0.10 # Velocity forward
                     self.twist.angular.z = angular_z
 
                     # Draw debug visuals
