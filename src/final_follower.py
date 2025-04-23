@@ -21,16 +21,7 @@ class LineFollower:
 
         # HSV range for detecting the black line
         self.lower_black = np.array([0, 0, 0])
-        self.upper_black = np.array([180, 255, 50])
-
-        # Directory to save images for debugging
-        self.image_save_dir = '/local/student/catkin_ws/src/menelao_challenge/tmp/'
-        if not os.path.exists(self.image_save_dir):
-            os.makedirs(self.image_save_dir)
-
-        # How often to save images (in seconds)
-        self.save_interval = 5
-        self.last_saved_time = rospy.Time.now()
+        self.upper_black = np.array([180, 255, 60])
 
         rospy.loginfo("Line follower node started, waiting for images...")
 
@@ -46,7 +37,7 @@ class LineFollower:
         height, width, _ = cv_image.shape
 
         # Crop for bottom 20%
-        crop_img = hsv[int(height * 0.80):height, :]
+        crop_img = hsv[int(height * 0.65):height, :]
 
         # Apply Gaussian blur to reduce image noise
         blurred = cv2.GaussianBlur(crop_img, (5, 5), 0)
@@ -74,20 +65,21 @@ class LineFollower:
                     cv2.circle(mask, (cx, int(mask.shape[0] / 2)), 5, (255, 0, 0), -1)
 
                     # Set forward speed and adjust angular speed based on error
-                    self.twist.linear.x = 0.10 # Move forward at a constant speed
-                    self.twist.angular.z = -float(error) / 250.0 # Use smaller gain (increase the divisor) to make turning less sensitive
+                    self.twist.linear.x = 0.05
+                    # Use smaller gain (increase the divisor) to make turning less sensitive
+                    self.twist.angular.z = -float(error) / 350.0
                 else:
                     # No valid mass found; rotate to search for line
                     self.twist.linear.x = 0.0
-                    self.twist.angular.z = 0.3
+                    self.twist.angular.z = 0.15
             else:
                 # Contour too small; rotate in place
                 self.twist.linear.x = 0.0
-                self.twist.angular.z = 0.3
+                self.twist.angular.z = 0.15
         else:
             # No contours found; rotate to find line
             self.twist.linear.x = 0.0
-            self.twist.angular.z = 0.3
+            self.twist.angular.z = 0.15
 
         # Publish the movement command
         self.cmd_pub.publish(self.twist)
@@ -97,22 +89,8 @@ class LineFollower:
         cv2.imshow("Mask", mask)
         cv2.waitKey(1)
 
-        # Save an image at fixed intervals
-        current_time = rospy.Time.now()
-        if current_time - self.last_saved_time >= rospy.Duration(self.save_interval):
-            self.save_image(cv_image)
-            self.last_saved_time = current_time
-
-    def save_image(self, image):
-        # Generate a timestamped filename
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        image_filename = os.path.join(self.image_save_dir, f"image_{timestamp}.jpg")
-        # Save the image to disk
-        cv2.imwrite(image_filename, image)
-        rospy.loginfo(f"Image saved: {image_filename}")
-
     def run(self):
-        rospy.spin() # Keep the node running until shutdown
+        rospy.spin()
 
 if __name__ == '__main__':
     try:
