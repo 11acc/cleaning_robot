@@ -121,7 +121,7 @@ class LineFollowerSM:
             if cx is not None:
                 # use proportional centring once the line is visible again
                 error = cx - w // 2
-                self.twist.angular_z = (
+                self.twist.angular.z = (
                     self.turn_speed * (1 if self.turn_direction == "LEFT" else -1)
                     - self.kp_turn * float(error)
                 )
@@ -131,7 +131,7 @@ class LineFollowerSM:
                     rospy.loginfo_once("TURN → FOLLOW (centred)")
             else:
                 # line not visible yet – spin at nominal rate
-                self.twist.angular_z = self.turn_speed if self.turn_direction == "LEFT" else -self.turn_speed
+                self.twist.angular.z = self.turn_speed if self.turn_direction == "LEFT" else -self.turn_speed
 
         # ---------------- Publish command ---------------------------------
         self.cmd_pub.publish(self.twist)
