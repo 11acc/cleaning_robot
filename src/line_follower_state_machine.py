@@ -30,10 +30,6 @@ class LineFollowerSM:
         self.top_roi = (0.55, 0.70)
         self.bot_roi = (0.94, 1.00)
 
-        # How long to keep going forward after the line vanishes
-        self.wait_after_loss = 8          # frames (≈0.8 s @ 10 fps)
-        self.loss_counter    = 0
-
         self.debug = rospy.get_param("~debug", True)
 
         # ---------------- State machine -----------------------------------
@@ -60,7 +56,9 @@ class LineFollowerSM:
     def centroid_x(mask):
         # Return centroid x of a binary mask, or None if empty
         M = cv2.moments(mask)
-        return int(M["m10"] / M["m00"]) if M["m00"] else None
+        if M["m00"] == 0:
+            return None
+        return int(M["m10"] / M["m00"])
 
     def follow_centre_line(self, line_mask, width):
         # Proportional steering on bottom-ROI mask
@@ -103,25 +101,15 @@ class LineFollowerSM:
         if self.state == "FOLLOW":
             if has_bar:
                 self.state = "PREPARE"
-                self.loss_counter = 0
                 rospy.loginfo_once("FOLLOW → PREPARE")
             self.follow_centre_line(bot_mask, w)
 
         elif self.state == "PREPARE":
-            # if centre line disappeared
-            if not has_line:
-                self.loss_counter += 1
-                # go forward or a few frames
-                if self.loss_counter < self.wait_after_loss:
-                    self.twist.linear.x = self.linear_speed
-                    self.twist.angular.z = 0.0
-                else:
-                    self.turn_direction = self.choose_turn_direction(top_mask)
-                    self.state = "TURN"
-                    rospy.loginfo_once(f"PREPARE → TURN ({self.turn_direction})")
-            else:
-                self.loss_counter = 0
-                self.follow_centre_line(bot_mask, w)
+            self.follow_centre_line(bot_mask, w)
+            if not has_line:  # centre line disappeared
+                self.turn_direction = self.choose_turn_direction(top_mask)
+                self.state = "TURN"
+                rospy.loginfo_once(f"PREPARE → TURN ({self.turn_direction})")
 
         elif self.state == "TURN":
             # keep turning in chosen direction
@@ -130,8 +118,10 @@ class LineFollowerSM:
             if cx is not None:
                 # use proportional centring once the line is visible again
                 error = cx - w // 2
-                base = self.turn_speed if self.turn_direction == "LEFT" else -self.turn_speed
-                self.twist.angular_z = base - self.kp_turn * float(error)
+                self.twist.angular.z = (
+                    self.turn_speed * (1 if self.turn_direction == "LEFT" else -1)
+                    - self.kp_turn * float(error)
+                )
                 if abs(error) < self.center_tol:
                     # lock on: re‑enter FOLLOW
                     self.state = "FOLLOW"
