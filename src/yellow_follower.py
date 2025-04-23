@@ -37,6 +37,7 @@ class YellowFollower:
         self.stop_distance_m = 0.05
         self.max_distance_from_start_m = 1.5
         self.rotation_duration = 10.0
+        self.image_height = 480  # Assuming a default image height of 480 pixels
 
         # HSV thresholds for yellow
         self.lower_yellow = np.array([15, 60, 100])
@@ -91,10 +92,14 @@ class YellowFollower:
 
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             mask_area = 0  # Total yellow area in the current mask
+            bottom_yellow = False  # Flag to indicate if yellow is on the bottom of the mask
 
             if contours:
                 for contour in contours:
                     mask_area += cv2.contourArea(contour)  # Accumulate area for all yellow contours
+                    x, y, w, h = cv2.boundingRect(contour)
+                    if y + h > (self.image_height * 0.75):  # Check if the bottom of the bounding box is in the lower 25% of the image
+                        bottom_yellow = True
 
             if self.searching:
                 if not self.recording_360:
@@ -122,7 +127,7 @@ class YellowFollower:
                         self.cmd_vel_pub.publish(self.twist)
                         self.find_and_set_best_target()  # Find the best target after scanning
 
-            # Approaching logic (only runs if target is set and not searching)
+            # Approaching logic
             if self.approaching and self.target_pose is not None and self.current_pose is not None:
                 x_cur, y_cur, yaw_cur = self.current_pose
                 target_x, target_y = self.target_pose
@@ -133,7 +138,24 @@ class YellowFollower:
                 angle_diff = angle_to_target - yaw_cur
                 angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
-                if dist_to_target <= self.stop_distance_m:
+                if bottom_yellow:
+                    rospy.loginfo("Yellow on the bottom, opening gripper and returning")
+                    print("open gripper")
+                    self.twist.linear.x = 0
+                    self.twist.angular.z = 0
+                    self.approaching = False
+                    self.stopped_at_target = True
+                    self.returning = True
+
+                elif not contours:  # Yellow lost during approach
+                    rospy.loginfo("Yellow lost, stopping and returning")
+                    print("open gripper")
+                    self.twist.linear.x = 0
+                    self.twist.angular.z = 0
+                    self.approaching = False
+                    self.stopped_at_target = True
+                    self.returning = True
+                elif dist_to_target <= self.stop_distance_m:
                     rospy.loginfo("Reached target zone")
                     print("open gripper")
                     self.twist.linear.x = 0
