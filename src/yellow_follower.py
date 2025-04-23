@@ -29,9 +29,9 @@ class YellowFollower:
 
         # Parameters
         self.min_contour_area = 500
-        self.max_forward_speed = 0.3  # Faster forward speed
-        self.max_angular_speed = 0.6  # Faster turning speed
-        self.search_angular_speed = 0.5  # Speed while searching (turning in place)
+        self.max_forward_speed = 0.3  # Forward speed
+        self.max_angular_speed = 0.6  # Turning speed
+        self.search_angular_speed = 0.5  # Turning speed while searching
         self.max_approach_distance = 1.5  # meters to move forward while approaching
 
         # HSV thresholds for yellow (adjust if needed)
@@ -85,25 +85,24 @@ class YellowFollower:
 
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            yellow_detected = False
             if contours:
                 largest_contour = max(contours, key=cv2.contourArea)
                 contour_area = cv2.contourArea(largest_contour)
 
                 if contour_area > self.min_contour_area:
-                    yellow_detected = True
-                    M = cv2.moments(largest_contour)
-                    cx = int(M['m10'] / M['m00'])
-                    height, width = cv_image.shape[:2]
-                    error_x = float(cx - width / 2) / float(width / 2)  # Normalize error_x [-1,1]
-
+                    # Yellow detected
                     if self.searching:
                         rospy.loginfo("Yellow detected, starting approach")
                         self.searching = False
                         self.approaching = True
-                        self.approach_start_pose = self.current_pose  # Record where approach started
+                        self.approach_start_pose = self.current_pose
 
                     if self.approaching:
+                        M = cv2.moments(largest_contour)
+                        cx = int(M['m10'] / M['m00'])
+                        height, width = cv_image.shape[:2]
+                        error_x = float(cx - width / 2) / float(width / 2)  # Normalize error_x [-1,1]
+
                         dist_moved = self.distance_moved(self.approach_start_pose, self.current_pose)
                         if dist_moved >= self.max_approach_distance:
                             rospy.loginfo(f"Approached max distance {self.max_approach_distance}m, stopping approach")
@@ -114,9 +113,8 @@ class YellowFollower:
                         else:
                             # Control robot to approach yellow
                             if abs(error_x) > 0.05:
-                                # Turn proportional to error_x (negative sign to correct direction)
                                 self.twist.angular.z = -self.max_angular_speed * error_x
-                                self.twist.linear.x = 0.0  # Slow down while turning
+                                self.twist.linear.x = 0.0
                             else:
                                 self.twist.linear.x = self.max_forward_speed
                                 self.twist.angular.z = 0.0
@@ -129,10 +127,13 @@ class YellowFollower:
                         self.returning = True
                         self.twist.linear.x = 0
                         self.twist.angular.z = 0
-                    else:
-                        # If searching and no valid yellow, keep turning in place
+                    elif self.searching:
+                        # Rotate in place searching
                         self.twist.linear.x = 0
                         self.twist.angular.z = self.search_angular_speed
+                    else:
+                        self.twist.linear.x = 0
+                        self.twist.angular.z = 0
             else:
                 # No contours found
                 if self.approaching:
@@ -141,10 +142,13 @@ class YellowFollower:
                     self.returning = True
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0
-                else:
-                    # Searching: rotate in place to find yellow
+                elif self.searching:
+                    # Rotate in place searching
                     self.twist.linear.x = 0
                     self.twist.angular.z = self.search_angular_speed
+                else:
+                    self.twist.linear.x = 0
+                    self.twist.angular.z = 0
 
             self.cmd_vel_pub.publish(self.twist)
 
