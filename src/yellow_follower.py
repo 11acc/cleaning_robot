@@ -27,13 +27,17 @@ class YellowFollower:
         self.stopped_at_target = False
         self.returning = False
         self.completed = False  # Entire cycle done flag
+        self.recording_360 = False # Flag for 360 recording
 
         # Parameters
         self.min_contour_area = 500
+        self.search_rotation_speed = 0.2  # Speed for rotating during search
         self.focal_length_px = 554  # Replace with your camera's focal length in pixels
         self.real_yellow_width_m = 0.2  # Real width of yellow zone in meters
         self.stop_distance_m = 0.05  # Stop distance in meters (5 cm)
         self.max_distance_from_start_m = 1.5  # Maximum distance from start pose
+        self.rotation_duration = 10.0  # Duration for 360 rotation in seconds
+        self.start_rotation_time = None  # Time when rotation started
 
         # HSV thresholds for yellow (widened for lighting variations)
         self.lower_yellow = np.array([15, 60, 100])
@@ -89,7 +93,26 @@ class YellowFollower:
 
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            if contours:
+            if self.searching:
+                if not self.recording_360:
+                    rospy.loginfo("Starting 360 degree recording...")
+                    self.recording_360 = True
+                    self.start_rotation_time = rospy.Time.now().to_sec()
+                else:
+                    # Continue rotating
+                    self.twist.linear.x = 0
+                    self.twist.angular.z = self.search_rotation_speed  # Rotate at defined speed
+                    self.cmd_vel_pub.publish(self.twist)
+
+                    # Check if rotation duration is complete
+                    time_now = rospy.Time.now().to_sec()
+                    if (time_now - self.start_rotation_time) >= self.rotation_duration:
+                        rospy.loginfo("360 degree recording complete, proceeding to find the yellow zone.")
+                        self.recording_360 = False  # Stop recording
+                        self.twist.angular.z = 0.0  # Stop rotation
+                        self.cmd_vel_pub.publish(self.twist)
+
+            if contours and not self.recording_360:
                 largest_contour = max(contours, key=cv2.contourArea)
                 contour_area = cv2.contourArea(largest_contour)
                 if contour_area > self.min_contour_area:
