@@ -30,7 +30,6 @@ class YellowFollower:
 
         # Parameters
         self.min_contour_area = 500
-
         # Camera and object parameters (adjust these to your setup)
         self.focal_length_px = 554  # Replace with your camera's focal length in pixels
         self.real_yellow_width_m = 0.2  # Real width of yellow zone in meters
@@ -139,9 +138,9 @@ class YellowFollower:
                     self.stopped_at_target = True
                     self.returning = True  # Start return after stopping
                 else:
-                    max_speed = 0.25
-                    min_speed = 0.05
-                    slow_down_radius = 0.2
+                    max_speed = 0.15
+                    min_speed = 0.02
+                    slow_down_radius = 0.3
 
                     if dist_to_target < slow_down_radius:
                         speed = min_speed + (max_speed - min_speed) * (dist_to_target / slow_down_radius)
