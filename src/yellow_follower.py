@@ -24,55 +24,60 @@ class YellowFollower:
         # State flags
         self.searching = True
         self.approaching = False
+        self.stopped_at_target = False
         self.returning = False
-        self.completed = False
+        self.completed = False  # Entire cycle done flag
 
         # Parameters
         self.min_contour_area = 500
-        self.max_forward_speed = 0.3  # Forward speed
-        self.max_angular_speed = 0.6  # Turning speed
-        self.search_angular_speed = 0.5  # Turning speed while searching
-        self.max_approach_distance = 1.5  # meters to move forward while approaching
 
-        # HSV thresholds for yellow (adjust if needed)
+        # Camera and object parameters (adjust these to your setup)
+        self.focal_length_px = 554  # Replace with your camera's focal length in pixels
+        self.real_yellow_width_m = 0.2  # Real width of yellow zone in meters
+        self.stop_distance_m = 0.05  # Stop distance in meters (5 cm)
+
+        # HSV thresholds for yellow (widened for lighting variations)
         self.lower_yellow = np.array([15, 60, 100])
         self.upper_yellow = np.array([40, 255, 255])
 
-        # Odometry
-        self.start_pose = None  # Robot pose when node starts (x, y, yaw)
-        self.approach_start_pose = None  # Robot pose when started approaching (x, y)
-        self.current_pose = None  # Current robot pose (x, y, yaw)
+        # Odometry poses
+        self.start_pose = None  # (x, y, yaw)
+        self.current_pose = None  # (x, y, yaw)
 
-        rospy.loginfo("YellowFollower node started, waiting for camera and odometry data...")
+        # Fixed target pose (set once when yellow first detected)
+        self.target_pose = None  # (x, y)
+
+        rospy.loginfo("YellowFollower node started, waiting for odometry and camera data...")
 
     def odom_callback(self, msg):
         position = msg.pose.pose.position
         orientation_q = msg.pose.pose.orientation
         orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
-        (_, _, yaw) = euler_from_quaternion(orientation_list)
+        (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
         self.current_pose = (position.x, position.y, yaw)
-
         if self.start_pose is None:
             self.start_pose = self.current_pose
             rospy.loginfo(f"Recorded start pose: x={position.x:.2f}, y={position.y:.2f}, yaw={yaw:.2f}")
 
-    def distance_moved(self, start, current):
-        dx = current[0] - start[0]
-        dy = current[1] - start[1]
-        return math.sqrt(dx*dx + dy*dy)
-
     def image_callback(self, msg):
         try:
+            # If entire cycle completed, stop and do nothing
             if self.completed:
-                # Stop robot permanently
                 self.twist.linear.x = 0
                 self.twist.angular.z = 0
                 self.cmd_vel_pub.publish(self.twist)
                 return
 
-            if self.returning:
-                # Return to start pose
+            # If stopped at target and returning, run return controller and skip image processing
+            if self.stopped_at_target and self.returning:
                 self.return_to_start()
+                self.cmd_vel_pub.publish(self.twist)
+                return
+
+            # If stopped at target but not returning yet, hold position
+            if self.stopped_at_target and not self.returning:
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0
                 self.cmd_vel_pub.publish(self.twist)
                 return
 
@@ -85,77 +90,86 @@ class YellowFollower:
 
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            if contours:
+            if contours and self.target_pose is None:
+                # Only detect target once
                 largest_contour = max(contours, key=cv2.contourArea)
                 contour_area = cv2.contourArea(largest_contour)
 
                 if contour_area > self.min_contour_area:
-                    # Yellow detected
-                    if self.searching:
-                        rospy.loginfo("Yellow detected, starting approach")
+                    M = cv2.moments(largest_contour)
+                    cx = int(M['m10'] / M['m00'])
+                    cy = int(M['m01'] / M['m00'])
+
+                    height, width = cv_image.shape[:2]
+                    error_x = (cx - width / 2) / (width / 2)
+
+                    x, y, w, h = cv2.boundingRect(largest_contour)
+                    distance = (self.focal_length_px * self.real_yellow_width_m) / w
+
+                    rospy.loginfo(f"Yellow zone detected - setting fixed target")
+
+                    if self.current_pose is not None:
+                        x_robot, y_robot, yaw_robot = self.current_pose
+                        lateral_offset = error_x * self.real_yellow_width_m
+                        target_x = x_robot + distance * math.cos(yaw_robot) - lateral_offset * math.sin(yaw_robot)
+                        target_y = y_robot + distance * math.sin(yaw_robot) + lateral_offset * math.cos(yaw_robot)
+                        self.target_pose = (target_x, target_y)
+                        rospy.loginfo(f"Fixed target pose set at x={target_x:.2f}, y={target_y:.2f}")
+
                         self.searching = False
                         self.approaching = True
-                        self.approach_start_pose = self.current_pose
 
-                    if self.approaching:
-                        M = cv2.moments(largest_contour)
-                        cx = int(M['m10'] / M['m00'])
-                        height, width = cv_image.shape[:2]
-                        error_x = float(cx - width / 2) / float(width / 2)  # Normalize error_x [-1,1]
+            # If target_pose set, approach it
+            if self.target_pose is not None and self.current_pose is not None and not self.stopped_at_target:
+                x_cur, y_cur, yaw_cur = self.current_pose
+                target_x, target_y = self.target_pose
+                dx = target_x - x_cur
+                dy = target_y - y_cur
+                dist_to_target = math.sqrt(dx * dx + dy * dy)
+                angle_to_target = math.atan2(dy, dx)
+                angle_diff = angle_to_target - yaw_cur
+                angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
-                        dist_moved = self.distance_moved(self.approach_start_pose, self.current_pose)
-                        if dist_moved >= self.max_approach_distance:
-                            rospy.loginfo(f"Approached max distance {self.max_approach_distance}m, stopping approach")
-                            self.approaching = False
-                            self.returning = True
-                            self.twist.linear.x = 0
-                            self.twist.angular.z = 0
-                        else:
-                            # Control robot to approach yellow
-                            if abs(error_x) > 0.05:
-                                self.twist.angular.z = -self.max_angular_speed * error_x
-                                self.twist.linear.x = 0.0
-                            else:
-                                self.twist.linear.x = self.max_forward_speed
-                                self.twist.angular.z = 0.0
-
-                else:
-                    # Contour too small or lost
-                    if self.approaching:
-                        rospy.loginfo("Yellow lost during approach - stopping and returning")
-                        self.approaching = False
-                        self.returning = True
-                        self.twist.linear.x = 0
-                        self.twist.angular.z = 0
-                    elif self.searching:
-                        # Rotate in place searching
-                        self.twist.linear.x = 0
-                        self.twist.angular.z = self.search_angular_speed
-                    else:
-                        self.twist.linear.x = 0
-                        self.twist.angular.z = 0
-            else:
-                # No contours found
-                if self.approaching:
-                    rospy.loginfo("Yellow lost during approach - stopping and returning")
+                if dist_to_target <= self.stop_distance_m:
+                    rospy.loginfo("Reached fixed target zone")
+                    print("gripper open")
+                    self.twist.linear.x = 0
+                    self.twist.angular.z = 0
                     self.approaching = False
-                    self.returning = True
-                    self.twist.linear.x = 0
-                    self.twist.angular.z = 0
-                elif self.searching:
-                    # Rotate in place searching
-                    self.twist.linear.x = 0
-                    self.twist.angular.z = self.search_angular_speed
+                    self.stopped_at_target = True
+                    self.returning = True  # Start return after stopping
                 else:
-                    self.twist.linear.x = 0
-                    self.twist.angular.z = 0
+                    max_speed = 0.15
+                    min_speed = 0.02
+                    slow_down_radius = 0.3
+
+                    if dist_to_target < slow_down_radius:
+                        speed = min_speed + (max_speed - min_speed) * (dist_to_target / slow_down_radius)
+                        speed = max(speed, min_speed)
+                    else:
+                        speed = max_speed
+
+                    if abs(angle_diff) > 0.05:
+                        self.twist.linear.x = 0
+                        self.twist.angular.z = 0.4 if angle_diff > 0 else -0.4
+                    else:
+                        self.twist.angular.z = 0
+                        self.twist.linear.x = speed
 
             self.cmd_vel_pub.publish(self.twist)
 
             # Visualization
-            cv2.imshow("Camera View", cv_image)
-            cv2.imshow("Processed Mask", mask)
-            cv2.waitKey(3)
+            if cv_image is not None:
+                if self.target_pose is not None:
+                    cv2.putText(cv_image, "Fixed Target Set", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                elif self.searching:
+                    cv2.putText(cv_image, "Searching for Yellow", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+                cv2.imshow("Camera View", cv_image)
+                cv2.imshow("Processed Mask", mask)
+                cv2.waitKey(3)
 
         except Exception as e:
             rospy.logerr(f"Error in image_callback: {e}")
@@ -180,29 +194,30 @@ class YellowFollower:
         angle_diff = angle_to_goal - yaw_cur
         angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
-        # Position control
-        if distance > 0.05:  # 5 cm tolerance
+        # First, position control
+        if distance > self.stop_distance_m:
             if abs(angle_diff) > 0.05:
                 self.twist.linear.x = 0
-                self.twist.angular.z = 0.5 if angle_diff > 0 else -0.5
+                self.twist.angular.z = 0.3 if angle_diff > 0 else -0.3
             else:
-                self.twist.linear.x = 0.2
+                self.twist.linear.x = 0.1
                 self.twist.angular.z = 0
             return
 
-        # Orientation control once position reached
+        # Then, orientation control once position is reached
         yaw_diff = yaw_start - yaw_cur
         yaw_diff = (yaw_diff + math.pi) % (2 * math.pi) - math.pi
 
-        if abs(yaw_diff) > 0.05:  # ~3 degrees tolerance
+        if abs(yaw_diff) > 0.05:
             self.twist.linear.x = 0
-            self.twist.angular.z = 0.5 if yaw_diff > 0 else -0.5
+            self.twist.angular.z = 0.3 if yaw_diff > 0 else -0.3
         else:
+            # Reached position and orientation
             rospy.loginfo("Returned to start pose with correct orientation - stopping")
             self.twist.linear.x = 0
             self.twist.angular.z = 0
             self.returning = False
-            self.completed = True
+            self.completed = True  # Mark entire cycle done
 
 if __name__ == '__main__':
     try:
