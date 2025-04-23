@@ -34,7 +34,7 @@ class YellowFollower:
         # Camera and object parameters (adjust these to your setup)
         self.focal_length_px = 554  # Replace with your camera's focal length in pixels
         self.real_yellow_width_m = 0.2  # Real width of yellow zone in meters
-        self.stop_distance_m = 0.03  # Stop distance in meters (5 cm)
+        self.stop_distance_m = 0.05  # Stop distance in meters (5 cm)
 
         # HSV thresholds for yellow (widened for lighting variations)
         self.lower_yellow = np.array([15, 60, 100])
@@ -125,13 +125,13 @@ class YellowFollower:
                 target_x, target_y = self.target_pose
                 dx = target_x - x_cur
                 dy = target_y - y_cur
-                dist_to_target = math.sqrt(dx*dx + dy*dy)
+                dist_to_target = math.sqrt(dx * dx + dy * dy)
                 angle_to_target = math.atan2(dy, dx)
                 angle_diff = angle_to_target - yaw_cur
                 angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
                 if dist_to_target <= self.stop_distance_m:
-                    rospy.loginfo("Reached fixed target zone - stopping permanently")
+                    rospy.loginfo("Reached fixed target zone")
                     print("gripper open")
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0
@@ -161,7 +161,6 @@ class YellowFollower:
             # Visualization
             if cv_image is not None:
                 if self.target_pose is not None:
-                    # Draw fixed target on image center for reference (optional)
                     cv2.putText(cv_image, "Fixed Target Set", (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 elif self.searching:
@@ -195,19 +194,30 @@ class YellowFollower:
         angle_diff = angle_to_goal - yaw_cur
         angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
-        if distance < 0.1:
-            rospy.loginfo("Returned to start point - stopping")
-            self.twist.linear.x = 0
-            self.twist.angular.z = 0
-            self.returning = False
-            self.completed = True  # Mark entire cycle done
-        else:
+        # First, position control
+        if distance > self.stop_distance_m:
             if abs(angle_diff) > 0.05:
                 self.twist.linear.x = 0
                 self.twist.angular.z = 0.3 if angle_diff > 0 else -0.3
             else:
                 self.twist.linear.x = 0.1
                 self.twist.angular.z = 0
+            return
+
+        # Then, orientation control once position is reached
+        yaw_diff = yaw_start - yaw_cur
+        yaw_diff = (yaw_diff + math.pi) % (2 * math.pi) - math.pi
+
+        if abs(yaw_diff) > 0.05:
+            self.twist.linear.x = 0
+            self.twist.angular.z = 0.3 if yaw_diff > 0 else -0.3
+        else:
+            # Reached position and orientation
+            rospy.loginfo("Returned to start pose with correct orientation - stopping")
+            self.twist.linear.x = 0
+            self.twist.angular.z = 0
+            self.returning = False
+            self.completed = True  # Mark entire cycle done
 
 if __name__ == '__main__':
     try:
