@@ -94,7 +94,6 @@ class YellowFollower:
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             if contours:
-                # Only detect target once
                 largest_contour = max(contours, key=cv2.contourArea)
                 contour_area = cv2.contourArea(largest_contour)
 
@@ -106,33 +105,23 @@ class YellowFollower:
                     height, width = cv_image.shape[:2]
                     error_x = (cx - width / 2) / (width / 2)
 
-                    #x, y, w, h = cv2.boundingRect(largest_contour)
-                    #distance = (self.focal_length_px * self.real_yellow_width_m) / w
-
                     rospy.loginfo(f"Yellow zone detected - approaching")
 
-                    if self.current_pose is not None:
-                        #x_robot, y_robot, yaw_robot = self.current_pose
-                        #lateral_offset = error_x * self.real_yellow_width_m
-                        #target_x = x_robot + distance * math.cos(yaw_robot) - lateral_offset * math.sin(yaw_robot)
-                        #target_y = y_robot + distance * math.sin(yaw_robot) + lateral_offset * math.cos(yaw_robot)
+                    self.searching = False
+                    self.approaching = True
 
-                        #self.target_pose = (target_x, target_y)
+                    self.twist.linear.x = self.approach_speed
+                    self.twist.angular.z = -error_x * 0.5  # Steering to center
 
-                        self.searching = False
-                        self.approaching = True
-
-                        self.twist.linear.x = self.approach_speed
-                        self.twist.angular.z = -error_x * 0.5  # Steering to center
-
-                        if abs(error_x) < 0.1 and self.twist.linear.x <= self.stop_distance_m: #If error is small and close enough
-                            rospy.loginfo("Reached fixed target zone")
-                            print("open gripper")
-                            self.twist.linear.x = 0.0
-                            self.twist.angular.z = 0.0
-                            self.approaching = False
-                            self.stopped_at_target = True
-                            self.returning = True  # Start return after stopping
+                    #if abs(error_x) < 0.1 and self.twist.linear.x <= self.stop_distance_m: #If error is small and close enough
+                    if self.check_if_inside_zone(mask, cx, cy):
+                        rospy.loginfo("Reached yellow zone, opening gripper")
+                        print("open gripper")
+                        self.twist.linear.x = 0.0
+                        self.twist.angular.z = 0.0
+                        self.approaching = False
+                        self.stopped_at_target = True
+                        self.returning = True  # Start return after stopping
                 else:
                     self.twist.linear.x = 0.0
                     self.twist.angular.z = 0.0
@@ -211,6 +200,14 @@ class YellowFollower:
                 rospy.loginfo("Reached starting point and orientation.")
 
         self.cmd_vel_pub.publish(self.twist)
+
+    def check_if_inside_zone(self, mask, cx, cy):
+        # Check if the center point is within the yellow zone in the mask
+        height, width = mask.shape
+        if 0 <= cx < width and 0 <= cy < height:
+            if mask[cy, cx] > 0:
+                return True
+        return False
 
 if __name__ == '__main__':
     try:
