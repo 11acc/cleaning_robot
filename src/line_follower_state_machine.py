@@ -28,7 +28,7 @@ class LineFollowerSM:
 
         # ROI limits
         self.top_roi = (0.55, 0.70)
-        self.bot_roi = (0.94, 1.00)
+        self.bot_roi = (0.80, 1.00)
 
         self.debug = rospy.get_param("~debug", True)
 
