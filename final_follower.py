@@ -10,98 +10,113 @@ import os
 
 class LineFollower:
     def __init__(self):
+        # Initialize the ROS node
         rospy.init_node('line_follower', anonymous=True)
         
-        # Initialize CV Bridge and Twist message
-        self.bridge = CvBridge()
-        self.twist = Twist()
+        self.bridge = CvBridge() # Bridge to convert ROS images to OpenCV format
+        self.twist = Twist() # Twist message to store movement commands
 
-        # Publisher for velocity commands
-        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-        
-        # Subscriber for camera images
-        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10) # Publisher to send movement commands to the robot
+        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback) # Subscriber to get image data from the robot's camera
 
-        # Define HSV range for black (adjust these if needed)
+        # HSV range for detecting the black line
         self.lower_black = np.array([0, 0, 0])
         self.upper_black = np.array([180, 255, 50])
 
-        # Create directory to save images if it doesn't exist
+        # Directory to save images for debugging
         self.image_save_dir = '/local/student/catkin_ws/src/menelao_challenge/tmp/'
         if not os.path.exists(self.image_save_dir):
             os.makedirs(self.image_save_dir)
 
-        # Interval for saving images (in seconds)
-        self.save_interval = 5  # Save an image every 5 seconds
+        # How often to save images (in seconds)
+        self.save_interval = 5
         self.last_saved_time = rospy.Time.now()
 
         rospy.loginfo("Line follower node started, waiting for images...")
 
     def image_callback(self, msg):
+        # Convert ROS image to OpenCV format
         try:
-            # Convert ROS Image to OpenCV image
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         except Exception as e:
             rospy.logerr("CV Bridge error: %s", e)
             return
 
-        # Convert image to HSV color space
+        # Convert image to HSV color space for better color filtering
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         height, width, _ = cv_image.shape
 
-        # Crop the image to the bottom 20% (ground level)
+        # Crop the image to focus on the bottom 20%
         crop_img = hsv[int(height * 0.8):height, :]
 
-        # Create a mask for black color using the defined HSV range
-        mask = cv2.inRange(crop_img, self.lower_black, self.upper_black)
+        # Apply Gaussian blur to reduce image noise
+        blurred = cv2.GaussianBlur(crop_img, (5, 5), 0)
 
-        # Debugging: Show the cropped image and mask
-        cv2.imshow("Cropped Image", crop_img)
-        cv2.imshow("Mask", mask)
+        # Create a binary mask for black color
+        mask = cv2.inRange(blurred, self.lower_black, self.upper_black)
 
-        # Calculate moments of the mask to get the center of mass
-        M = cv2.moments(mask)
-        if M['m00'] > 0:
-            # Calculate the centroid (center of mass) of the line
-            cx = int(M['m10'] / M['m00'])
-            error = cx - (width // 2)
+        # Find contours in the mask
+        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-            # Debugging: Draw the centroid on the mask
-            cv2.circle(mask, (cx, int(height * 0.1)), 5, (255, 0, 0), -1)
+        # Check if any contours were found
+        if contours:
+            # Use the largest contour, assuming it’s the line
+            largest_contour = max(contours, key=cv2.contourArea)
+            # Ignore small contours (likely noise)
+            if cv2.contourArea(largest_contour) > 1000:
+                # Calculate the center of mass of the contour
+                M = cv2.moments(largest_contour)
+                if M['m00'] != 0:
+                    cx = int(M['m10'] / M['m00'])
+                    # Error is the horizontal distance from image center
+                    error = cx - (width // 2)
 
-            # Set forward speed and use error for turning
-            self.twist.linear.x = 0.15
-            self.twist.angular.z = -float(error) / 200.0
+                    # Visualize the centroid
+                    cv2.circle(mask, (cx, int(mask.shape[0] / 2)), 5, (255, 0, 0), -1)
+
+                    # Set forward speed and adjust angular speed based on error
+                    self.twist.linear.x = 0.15
+                    self.twist.angular.z = -float(error) / 200.0
+                else:
+                    # No valid mass found; rotate to search for line
+                    self.twist.linear.x = 0.0
+                    self.twist.angular.z = 0.3
+            else:
+                # Contour too small; rotate in place
+                self.twist.linear.x = 0.0
+                self.twist.angular.z = 0.3
         else:
-            # If no line is detected, rotate in place to search for it
+            # No contours found; rotate to find line
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.3
 
-        # Publish the command
+        # Publish the movement command
         self.cmd_pub.publish(self.twist)
 
-        # Debugging: Show the final mask with the centroid
-        cv2.imshow("Mask with Centroid", mask)
+        # Show debug windows
+        cv2.imshow("Cropped Image", crop_img)
+        cv2.imshow("Mask", mask)
         cv2.waitKey(1)
 
-        # Save image every save_interval seconds
+        # Save an image at fixed intervals
         current_time = rospy.Time.now()
         if current_time - self.last_saved_time >= rospy.Duration(self.save_interval):
             self.save_image(cv_image)
             self.last_saved_time = current_time
 
     def save_image(self, image):
-        # Generate a unique filename based on the current time
+        # Generate a timestamped filename
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         image_filename = os.path.join(self.image_save_dir, f"image_{timestamp}.jpg")
-        
-        # Save the image
+        # Save the image to disk
         cv2.imwrite(image_filename, image)
         rospy.loginfo(f"Image saved: {image_filename}")
 
     def run(self):
+        # Keep the node running
         rospy.spin()
 
+# Entry point of the script
 if __name__ == '__main__':
     try:
         node = LineFollower()
