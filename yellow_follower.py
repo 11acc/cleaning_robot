@@ -43,6 +43,9 @@ class YellowFollower:
         self.start_pose = None  # (x, y, yaw)
         self.current_pose = None  # (x, y, yaw)
 
+        # Fixed target pose (set once when yellow first detected)
+        self.target_pose = None  # (x, y)
+
         rospy.loginfo("YellowFollower node started, waiting for odometry and camera data...")
 
     def odom_callback(self, msg):
@@ -57,9 +60,16 @@ class YellowFollower:
 
     def image_callback(self, msg):
         try:
-            # If returning to start, ignore image processing and run return controller
+            # If stopped at target and returning, run return controller and skip image processing
             if self.stopped_at_target and self.returning:
                 self.return_to_start()
+                self.cmd_vel_pub.publish(self.twist)
+                return
+
+            # If stopped at target but not returning yet, do nothing (wait)
+            if self.stopped_at_target and not self.returning:
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0
                 self.cmd_vel_pub.publish(self.twist)
                 return
 
@@ -89,30 +99,58 @@ class YellowFollower:
 
                     rospy.loginfo_throttle(1, f"Estimated distance to yellow zone: {distance:.2f} m")
 
-                    if self.searching:
-                        rospy.loginfo("Found yellow - switching to approach")
+                    # If target_pose not set yet, set it once here based on current robot position + estimated distance forward
+                    if self.target_pose is None and self.current_pose is not None:
+                        # Calculate target position relative to robot pose and camera view
+                        # Approximate target position in world frame:
+                        # Assume robot faces along yaw, target is distance meters ahead + some lateral offset from error_x
+                        x_robot, y_robot, yaw_robot = self.current_pose
+                        # Lateral offset from center, scale error_x by some factor (e.g. half yellow width)
+                        lateral_offset = error_x * self.real_yellow_width_m
+                        # Target position in world frame
+                        target_x = x_robot + distance * math.cos(yaw_robot) - lateral_offset * math.sin(yaw_robot)
+                        target_y = y_robot + distance * math.sin(yaw_robot) + lateral_offset * math.cos(yaw_robot)
+                        self.target_pose = (target_x, target_y)
+                        rospy.loginfo(f"Set fixed target pose at x={target_x:.2f}, y={target_y:.2f}")
+
+                        # Switch state
                         self.searching = False
                         self.approaching = True
 
-                    if self.approaching:
-                        if distance <= self.stop_distance_m:
+                    # Approach fixed target_pose if set
+                    if self.target_pose is not None and self.current_pose is not None:
+                        # Compute distance and angle to fixed target
+                        x_cur, y_cur, yaw_cur = self.current_pose
+                        target_x, target_y = self.target_pose
+                        dx = target_x - x_cur
+                        dy = target_y - y_cur
+                        dist_to_target = math.sqrt(dx*dx + dy*dy)
+                        angle_to_target = math.atan2(dy, dx)
+                        angle_diff = angle_to_target - yaw_cur
+                        angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
+
+                        if dist_to_target <= self.stop_distance_m:
                             if not self.stopped_at_target:
-                                rospy.loginfo("Reached target zone - stopping permanently")
+                                rospy.loginfo("Reached fixed target zone - stopping permanently")
+                                print("gripper open")  # Your requested print
                                 self.twist.linear.x = 0
                                 self.twist.angular.z = 0
                                 self.approaching = False
                                 self.stopped_at_target = True
                                 self.returning = True  # Start return after stopping
                         else:
-                            if abs(error_x) > 0.05:
-                                self.twist.angular.z = -error_x * 0.5
+                            # Control to approach target_pose
+                            if abs(angle_diff) > 0.1:
+                                self.twist.linear.x = 0
+                                self.twist.angular.z = 0.4 if angle_diff > 0 else -0.4
                             else:
                                 self.twist.angular.z = 0
-                            self.twist.linear.x = 0.1 * (1 - abs(error_x))
+                                self.twist.linear.x = 0.15
 
-                        cv2.circle(cv_image, (cx, cy), 10, (0, 255, 0), -1)
-                        cv2.putText(cv_image, "APPROACHING", (10, 30),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    # Visualization
+                    cv2.circle(cv_image, (cx, cy), 10, (0, 255, 0), -1)
+                    cv2.putText(cv_image, "APPROACHING FIXED TARGET", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 else:
                     self.handle_no_detection(cv_image)
             else:
@@ -175,7 +213,7 @@ class YellowFollower:
             self.twist.linear.x = 0
             self.twist.angular.z = 0
             self.returning = False
-            # Optionally, you can set flags to restart searching if you want
+            # Optionally, reset flags if you want to repeat
         else:
             # Rotate towards goal if angle difference is large
             if abs(angle_diff) > 0.1:
