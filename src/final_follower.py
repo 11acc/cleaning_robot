@@ -5,19 +5,17 @@ import numpy as np
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
-import datetime
-import os
 
 class LineFollower:
     def __init__(self):
         # Initialize the ROS node
         rospy.init_node('line_follower', anonymous=True)
         
-        self.bridge = CvBridge()# Bridge to convert ROS images to OpenCV format
-        self.twist = Twist() # Twist message to store movement commands
+        self.bridge = CvBridge()
+        self.twist = Twist()
 
-        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)  # Publisher to send movement commands to the robot
-        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback) # Subscribe to image data from the robot's camera
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
 
         # HSV range for detecting the black line
         self.lower_black = np.array([0, 0, 0])
@@ -27,7 +25,7 @@ class LineFollower:
 
     def image_callback(self, msg):
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8") # Convert ROS image to OpenCV format
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         except Exception as e:
             rospy.logerr("CV Bridge error: %s", e)
             return
@@ -36,7 +34,7 @@ class LineFollower:
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         height, width, _ = cv_image.shape
 
-        # Crop for bottom 20%
+        # Crop view
         crop_img = hsv[int(height * 0.65):height, :]
 
         # Apply Gaussian blur to reduce image noise
@@ -84,8 +82,39 @@ class LineFollower:
         # Publish the movement command
         self.cmd_pub.publish(self.twist)
 
-        # Show debug windows
-        cv2.imshow("Cropped Image", crop_img)
+        # Display HSV image
+        cv2.imshow("HSV", hsv)
+        
+        # Split the HSV channels
+        h, s, v = cv2.split(hsv)
+        
+        # Get min and max values for each channel
+        min_h, max_h = np.min(h), np.max(h)
+        min_s, max_s = np.min(s), np.max(s)
+        min_v, max_v = np.min(v), np.max(v)
+        
+        # Print the min and max values
+        print(f"Hue: Min = {min_h}, Max = {max_h}")
+        print(f"Saturation: Min = {min_s}, Max = {max_s}")
+        print(f"Value: Min = {min_v}, Max = {max_v}")
+        
+        # Show cropped versions too (more useful for line following)
+        h_crop, s_crop, v_crop = cv2.split(crop_img)
+        min_h_crop, max_h_crop = np.min(h_crop), np.max(h_crop)
+        min_s_crop, max_s_crop = np.min(s_crop), np.max(s_crop)
+        min_v_crop, max_v_crop = np.min(v_crop), np.max(v_crop)
+        
+        print(f"Cropped Hue: Min = {min_h_crop}, Max = {max_h_crop}")
+        print(f"Cropped Saturation: Min = {min_s_crop}, Max = {max_s_crop}")
+        print(f"Cropped Value: Min = {min_v_crop}, Max = {max_v_crop}")
+        
+        # Display individual HSV channels
+        cv2.imshow("Hue Channel", h)
+        cv2.imshow("Saturation Channel", s)
+        cv2.imshow("Value Channel", v)
+        
+        # Also show the original cropped and masked images
+        cv2.imshow("Cropped HSV", crop_img)
         cv2.imshow("Mask", mask)
         cv2.waitKey(1)
 
