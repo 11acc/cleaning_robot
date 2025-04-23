@@ -114,7 +114,7 @@ class LineFollowerSM:
                 # go forward or a few frames
                 if self.loss_counter < self.wait_after_loss:
                     self.twist.linear.x = self.linear_speed
-                    self.twist.angle.z = 0.0
+                    self.twist.angular.z = 0.0
                 else:
                     self.turn_direction = self.choose_turn_direction(top_mask)
                     self.state = "TURN"
