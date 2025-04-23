@@ -33,7 +33,7 @@ class YellowFollower:
         # Camera and object parameters (adjust these to your setup)
         self.focal_length_px = 554  # Replace with your camera's focal length in pixels
         self.real_yellow_width_m = 0.2  # Real width of yellow zone in meters
-        self.stop_distance_m = 0.15  # Stop distance in meters
+        self.stop_distance_m = 0.05  # Stop distance in meters
 
         # HSV thresholds for yellow (widened for lighting variations)
         self.lower_yellow = np.array([15, 60, 100])
