@@ -16,7 +16,7 @@ class RedPegGrabber:
         # State definitions
         self.WAITING = 0
         self.GRABBING = 1
-        self.HOLDING = 2
+        self.MOVING_RIGHT = 2  # New state to move right
         self.RELEASING = 3
         
         self.state = self.WAITING
@@ -56,9 +56,10 @@ class RedPegGrabber:
         self.fr_distance = float('inf')
         self.front_distance = float('inf')
         
-        # Hold time in seconds
-        self.hold_time = 5.0
-        self.hold_start_time = None
+        # Movement parameters
+        self.move_speed = 0.2  # Adjust as needed
+        self.move_duration = 2.0  # Time to move right in seconds
+        self.move_start_time = None
         
         # Thresholds
         self.min_area = 1000  # Minimum area to consider a valid red peg
@@ -155,9 +156,9 @@ class RedPegGrabber:
                     if self.state == self.WAITING:
                         state_str = "WAITING"
                     elif self.state == self.GRABBING:
-                        state_str = "GRABBING"  
-                    elif self.state == self.HOLDING:
-                        state_str = "HOLDING"
+                        state_str = "GRABBING"
+                    elif self.state == self.MOVING_RIGHT:
+                        state_str = "MOVING_RIGHT"
                     else:
                         state_str = "RELEASING"
                     cv2.putText(image, f"State: {state_str}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -166,7 +167,7 @@ class RedPegGrabber:
                     if (rospy.Time.now() - self.last_log_time).to_sec() >= 1.0:
                         self.last_log_time = rospy.Time.now()
                         rospy.loginfo(f"Detection stats: Area={area}, X-offset={x_offset}, " +
-                                     f"Detected={self.detection_count}, Centered={self.centered_count} in last second")
+                                      f"Detected={self.detection_count}, Centered={self.centered_count} in last second")
                         # Reset counters
                         self.detection_count = 0
                         self.centered_count = 0
@@ -207,6 +208,12 @@ class RedPegGrabber:
         rospy.loginfo("Closing gripper")
         rospy.sleep(1.5)  # Wait for gripper to close
     
+    def move_right(self):
+        cmd = Twist()
+        cmd.linear.x = self.move_speed  # Move right (or left, adjust sign if needed)
+        cmd.angular.z = 0.0
+        self.cmd_vel_pub.publish(cmd)
+    
     def stop_robot(self):
         cmd = Twist()
         cmd.linear.x = 0.0
@@ -244,23 +251,23 @@ class RedPegGrabber:
                 # Close the gripper to grab the peg
                 self.close_gripper()
                 
-                # Start the hold timer
-                self.hold_start_time = rospy.Time.now()
-                rospy.loginfo("Peg grabbed! Transitioning to HOLDING state")
-                self.state = self.HOLDING
+                # Transition to MOVING_RIGHT state
+                rospy.loginfo("Peg grabbed! Transitioning to MOVING_RIGHT state")
+                self.state = self.MOVING_RIGHT
                 self.last_state_change = rospy.Time.now()
+                self.move_start_time = rospy.Time.now()  # Record when movement started
             
-            elif self.state == self.HOLDING:
-                # Check if we've held the peg long enough
+            elif self.state == self.MOVING_RIGHT:
+                # Check if we've moved right long enough
                 current_time = rospy.Time.now()
-                time_held = (current_time - self.hold_start_time).to_sec()
+                time_moved = (current_time - self.move_start_time).to_sec()
                 
-                # Log holding progress
-                if int(time_held) != int((time_held - 0.1)):  # Log only when second changes
-                    rospy.loginfo(f"HOLDING: {time_held:.1f}/{self.hold_time} seconds elapsed")
+                # Move right
+                self.move_right()
                 
-                if time_held >= self.hold_time:
-                    rospy.loginfo(f"Hold time complete ({time_held:.1f} seconds). Transitioning to RELEASING")
+                if time_moved >= self.move_duration:
+                    rospy.loginfo(f"Move time complete ({time_moved:.1f} seconds). Transitioning to RELEASING")
+                    self.stop_robot()
                     self.state = self.RELEASING
                     self.last_state_change = rospy.Time.now()
             
@@ -291,4 +298,3 @@ if __name__ == '__main__':
         rospy.logerr(traceback.format_exc())
     finally:
         rospy.loginfo("Red Peg Grabber node is shutting down.")
-
