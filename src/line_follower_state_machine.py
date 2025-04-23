@@ -15,16 +15,19 @@ class LineFollowerSM:
         self.lower_black = np.array([0, 0, 0])
         self.upper_black = np.array([180, 255, 60])
 
-        self.kp           = 1.0 / 450.0   # steering gain (‑error * kp → ω)
+        self.kp           = 1.0 / 450.0   # steering gain during FOLLOW / PREPARE
         self.linear_speed = 0.06          # m/s during FOLLOW / PREPARE
-        self.turn_speed   = 0.35          # rad/s during TURN
+
+        self.turn_speed   = 0.35          # rad/s nominal turn rate
+        self.kp_turn      = 1.0 / 300.0   # additional proportional term while centring
+        self.center_tol   = 25            # pixels – "centred" threshold in TURN
 
         self.bar_px_thresh  = 2000        # "I see a bar" pixels in top ROI
         self.line_px_thresh = 1000        # "I see the centre line" pixels in bottom ROI
 
         # ROI limits (fractions of image height)
-        self.top_roi = (0.55, 0.70)       # 55 % – 70 % of rows
-        self.bot_roi = (0.88, 1.00)       # 88 % – 100 %
+        self.top_roi = (0.55, 0.70)       # 55 % – 70 % of rows
+        self.bot_roi = (0.88, 1.00)       # 88 % – 100 %
 
         # Display on by default – set ~debug:=false to suppress windows
         self.debug = rospy.get_param("~debug", True)
@@ -46,22 +49,29 @@ class LineFollowerSM:
     def choose_turn_direction(bar_mask):
         """Return 'LEFT' if more bar pixels are on the left half, else 'RIGHT'."""
         h, w = bar_mask.shape
-        left  = cv2.countNonZero(bar_mask[:, :w // 2])
-        right = cv2.countNonZero(bar_mask[:, w // 2:])
+        left  = cv2.countNonZero(bar_mask[:, : w // 2])
+        right = cv2.countNonZero(bar_mask[:, w // 2 :])
         return "RIGHT" if right > left else "LEFT"
 
     # ---------------------------------------------------------------------
+    @staticmethod
+    def centroid_x(mask):
+        """Return centroid x of a binary mask, or None if empty."""
+        M = cv2.moments(mask)
+        if M["m00"] == 0:
+            return None
+        return int(M["m10"] / M["m00"])
+
+    # ---------------------------------------------------------------------
     def follow_centre_line(self, line_mask, width):
-        """Proportional steering on bottom‑ROI mask."""
-        M = cv2.moments(line_mask)
-        if M["m00"] == 0:                   # no centroid → creep straight
+        """Proportional steering on bottom-ROI mask."""
+        cx = self.centroid_x(line_mask)
+        if cx is None:                       # no centroid → creep straight
             self.twist.linear.x  = 0.02
             self.twist.angular.z = 0.0
             return
 
-        cx = int(M["m10"] / M["m00"])
         error = cx - width // 2
-
         self.twist.linear.x  = self.linear_speed
         self.twist.angular.z = -self.kp * float(error)
 
@@ -80,8 +90,12 @@ class LineFollowerSM:
         top_start, top_end = int(h * self.top_roi[0]), int(h * self.top_roi[1])
         bot_start, bot_end = int(h * self.bot_roi[0]), int(h * self.bot_roi[1])
 
-        top_mask = cv2.inRange(hsv[top_start:top_end, :], self.lower_black, self.upper_black)
-        bot_mask = cv2.inRange(hsv[bot_start:bot_end, :], self.lower_black, self.upper_black)
+        top_mask = cv2.inRange(
+            hsv[top_start:top_end, :], self.lower_black, self.upper_black
+        )
+        bot_mask = cv2.inRange(
+            hsv[bot_start:bot_end, :], self.lower_black, self.upper_black
+        )
 
         has_bar  = cv2.countNonZero(top_mask) > self.bar_px_thresh
         has_line = cv2.countNonZero(bot_mask) > self.line_px_thresh
@@ -101,11 +115,23 @@ class LineFollowerSM:
                 rospy.loginfo_once(f"PREPARE → TURN ({self.turn_direction})")
 
         elif self.state == "TURN":
-            self.twist.linear.x  = 0.0
-            self.twist.angular.z =  self.turn_speed if self.turn_direction == "LEFT" else -self.turn_speed
-            if has_line:
-                self.state = "FOLLOW"
-                rospy.loginfo_once("TURN → FOLLOW")
+            # keep turning in chosen direction
+            self.twist.linear.x = 0.0
+            cx = self.centroid_x(bot_mask) if has_line else None
+            if cx is not None:
+                # use proportional centring once the line is visible again
+                error = cx - w // 2
+                self.twist.angular_z = (
+                    self.turn_speed * (1 if self.turn_direction == "LEFT" else -1)
+                    - self.kp_turn * float(error)
+                )
+                if abs(error) < self.center_tol:
+                    # lock on: re‑enter FOLLOW
+                    self.state = "FOLLOW"
+                    rospy.loginfo_once("TURN → FOLLOW (centred)")
+            else:
+                # line not visible yet – spin at nominal rate
+                self.twist.angular_z = self.turn_speed if self.turn_direction == "LEFT" else -self.turn_speed
 
         # ---------------- Publish command ---------------------------------
         self.cmd_pub.publish(self.twist)
@@ -116,8 +142,7 @@ class LineFollowerSM:
             vis = frame.copy()
             cv2.rectangle(vis, (0, top_start), (w, top_end), (255, 0, 0), 2)
             cv2.rectangle(vis, (0, bot_start), (w, bot_end), (0, 255, 0), 2)
-            cv2.putText(vis, self.state, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                        1.0, (0, 0, 255), 2, cv2.LINE_AA)
+            cv2.putText(vis, self.state, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
             cv2.imshow("camera", vis)
 
             # 2. Binary mask (top + bottom ROIs)
