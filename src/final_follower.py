@@ -36,19 +36,17 @@ class LineFollower:
 
     def image_callback(self, msg):
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")  # Convert ROS image to OpenCV format
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8") # Convert ROS image to OpenCV format
         except Exception as e:
             rospy.logerr("CV Bridge error: %s", e)
             return
 
+        # Convert image to HSV color space for better color filtering
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         height, width, _ = cv_image.shape
 
-        # Vertical crop (bottom 20%) and horizontal crop (center 60%)
-        start_row = int(height * 0.80)
-        start_col = int(width * 0.2)
-        end_col = int(width * 0.8)
-        crop_img = hsv[start_row:height, start_col:end_col]
+        # Crop for bottom 20%
+        crop_img = hsv[int(height * 0.80):height, :]
 
         # Apply Gaussian blur to reduce image noise
         blurred = cv2.GaussianBlur(crop_img, (5, 5), 0)
@@ -59,37 +57,39 @@ class LineFollower:
         # Find contours in the mask
         contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
+        # Check if any contours were found
         if contours:
+            # Use the largest contour, assuming it’s the line
             largest_contour = max(contours, key=cv2.contourArea)
+            # Ignore small contours (noise)
             if cv2.contourArea(largest_contour) > 1000:
+                # Calculate the center of mass of the contour
                 M = cv2.moments(largest_contour)
                 if M['m00'] != 0:
                     cx = int(M['m10'] / M['m00'])
-                    adjusted_cx = cx + start_col  # Adjusted for horizontal crop offset
-                    error = adjusted_cx - (width // 2)
+                    # Error is the horizontal distance from image center
+                    error = cx - (width // 2)
 
-                    # Apply dead zone logic
-                    if abs(error) < 10:
-                        angular_z = 0.0
-                    else:
-                        angular_z = -float(error) / 250.0  # Adjust sensitivity
-
-                    # Set movement commands
-                    self.twist.linear.x = 0.10 # Velocity forward
-                    self.twist.angular.z = angular_z
-
-                    # Draw debug visuals
+                    # Visualize the centroid
                     cv2.circle(mask, (cx, int(mask.shape[0] / 2)), 5, (255, 0, 0), -1)
+
+                    # Set forward speed and adjust angular speed based on error
+                    self.twist.linear.x = 0.15
+                    self.twist.angular.z = -float(error) / 250.0 # Use smaller gain (increase the divisor) to make turning less sensitive
                 else:
+                    # No valid mass found; rotate to search for line
                     self.twist.linear.x = 0.0
                     self.twist.angular.z = 0.3
             else:
+                # Contour too small; rotate in place
                 self.twist.linear.x = 0.0
                 self.twist.angular.z = 0.3
         else:
+            # No contours found; rotate to find line
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.3
 
+        # Publish the movement command
         self.cmd_pub.publish(self.twist)
 
         # Show debug windows
@@ -97,6 +97,7 @@ class LineFollower:
         cv2.imshow("Mask", mask)
         cv2.waitKey(1)
 
+        # Save an image at fixed intervals
         current_time = rospy.Time.now()
         if current_time - self.last_saved_time >= rospy.Duration(self.save_interval):
             self.save_image(cv_image)
