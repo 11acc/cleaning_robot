@@ -29,8 +29,9 @@ class YellowFollower:
 
         # Parameters
         self.min_contour_area = 500
-        self.max_speed = 0.25  # Forward speed
-        self.angular_speed = 0.4  # Turning speed
+        self.max_forward_speed = 0.3  # Faster forward speed
+        self.max_angular_speed = 0.6  # Faster turning speed
+        self.search_angular_speed = 0.5  # Speed while searching (turning in place)
         self.max_approach_distance = 1.5  # meters to move forward while approaching
 
         # HSV thresholds for yellow (adjust if needed)
@@ -38,9 +39,9 @@ class YellowFollower:
         self.upper_yellow = np.array([40, 255, 255])
 
         # Odometry
-        self.start_pose = None  # Robot pose when node starts
-        self.approach_start_pose = None  # Robot pose when started approaching
-        self.current_pose = None
+        self.start_pose = None  # Robot pose when node starts (x, y, yaw)
+        self.approach_start_pose = None  # Robot pose when started approaching (x, y)
+        self.current_pose = None  # Current robot pose (x, y, yaw)
 
         rospy.loginfo("YellowFollower node started, waiting for camera and odometry data...")
 
@@ -53,7 +54,7 @@ class YellowFollower:
 
         if self.start_pose is None:
             self.start_pose = self.current_pose
-            rospy.loginfo(f"Recorded start pose: x={position.x:.2f}, y={position.y:.2f}")
+            rospy.loginfo(f"Recorded start pose: x={position.x:.2f}, y={position.y:.2f}, yaw={yaw:.2f}")
 
     def distance_moved(self, start, current):
         dx = current[0] - start[0]
@@ -94,7 +95,7 @@ class YellowFollower:
                     M = cv2.moments(largest_contour)
                     cx = int(M['m10'] / M['m00'])
                     height, width = cv_image.shape[:2]
-                    error_x = float(cx - width / 2) / float(width / 2)  # Normalize
+                    error_x = float(cx - width / 2) / float(width / 2)  # Normalize error_x [-1,1]
 
                     if self.searching:
                         rospy.loginfo("Yellow detected, starting approach")
@@ -103,7 +104,6 @@ class YellowFollower:
                         self.approach_start_pose = self.current_pose  # Record where approach started
 
                     if self.approaching:
-                        # Check distance moved since start of approach
                         dist_moved = self.distance_moved(self.approach_start_pose, self.current_pose)
                         if dist_moved >= self.max_approach_distance:
                             rospy.loginfo(f"Approached max distance {self.max_approach_distance}m, stopping approach")
@@ -114,14 +114,15 @@ class YellowFollower:
                         else:
                             # Control robot to approach yellow
                             if abs(error_x) > 0.05:
-                                self.twist.angular.z = -self.angular_speed * error_x  # Turn proportional to error_x
+                                # Turn proportional to error_x (negative sign to correct direction)
+                                self.twist.angular.z = -self.max_angular_speed * error_x
                                 self.twist.linear.x = 0.0  # Slow down while turning
                             else:
-                                self.twist.linear.x = self.max_speed
+                                self.twist.linear.x = self.max_forward_speed
                                 self.twist.angular.z = 0.0
 
                 else:
-                    # Contour too small
+                    # Contour too small or lost
                     if self.approaching:
                         rospy.loginfo("Yellow lost during approach - stopping and returning")
                         self.approaching = False
@@ -129,8 +130,9 @@ class YellowFollower:
                         self.twist.linear.x = 0
                         self.twist.angular.z = 0
                     else:
+                        # If searching and no valid yellow, keep turning in place
                         self.twist.linear.x = 0
-                        self.twist.angular.z = 0
+                        self.twist.angular.z = self.search_angular_speed
             else:
                 # No contours found
                 if self.approaching:
@@ -140,8 +142,9 @@ class YellowFollower:
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0
                 else:
+                    # Searching: rotate in place to find yellow
                     self.twist.linear.x = 0
-                    self.twist.angular.z = 0
+                    self.twist.angular.z = self.search_angular_speed
 
             self.cmd_vel_pub.publish(self.twist)
 
@@ -177,9 +180,9 @@ class YellowFollower:
         if distance > 0.05:  # 5 cm tolerance
             if abs(angle_diff) > 0.05:
                 self.twist.linear.x = 0
-                self.twist.angular.z = 0.3 if angle_diff > 0 else -0.3
+                self.twist.angular.z = 0.5 if angle_diff > 0 else -0.5
             else:
-                self.twist.linear.x = 0.1
+                self.twist.linear.x = 0.2
                 self.twist.angular.z = 0
             return
 
@@ -189,7 +192,7 @@ class YellowFollower:
 
         if abs(yaw_diff) > 0.05:  # ~3 degrees tolerance
             self.twist.linear.x = 0
-            self.twist.angular.z = 0.3 if yaw_diff > 0 else -0.3
+            self.twist.angular.z = 0.5 if yaw_diff > 0 else -0.5
         else:
             rospy.loginfo("Returned to start pose with correct orientation - stopping")
             self.twist.linear.x = 0
