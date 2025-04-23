@@ -35,7 +35,8 @@ class LineFollower:
         height, width, _ = cv_image.shape
 
         # Crop view
-        crop_img = hsv[int(height * 0.65):height, :]
+        bottom = int(height*0.90)
+        crop_img = hsv[bottom:height, :]
 
         # Apply Gaussian blur to reduce image noise
         blurred = cv2.GaussianBlur(crop_img, (5, 5), 0)
@@ -63,21 +64,21 @@ class LineFollower:
                     cv2.circle(mask, (cx, int(mask.shape[0] / 2)), 5, (255, 0, 0), -1)
 
                     # Set forward speed and adjust angular speed based on error
-                    self.twist.linear.x = 0.05
+                    self.twist.linear.x = 0.1
                     # Use smaller gain (increase the divisor) to make turning less sensitive
-                    self.twist.angular.z = -float(error) / 350.0
+                    self.twist.angular.z = -float(error) / 450.0
                 else:
                     # No valid mass found; rotate to search for line
                     self.twist.linear.x = 0.0
-                    self.twist.angular.z = 0.15
+                    self.twist.angular.z = 0.2
             else:
                 # Contour too small; rotate in place
                 self.twist.linear.x = 0.0
-                self.twist.angular.z = 0.15
+                self.twist.angular.z = 0.2
         else:
             # No contours found; rotate to find line
             self.twist.linear.x = 0.0
-            self.twist.angular.z = 0.15
+            self.twist.angular.z = 0.2
 
         # Publish the movement command
         self.cmd_pub.publish(self.twist)
