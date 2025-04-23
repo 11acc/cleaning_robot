@@ -31,10 +31,13 @@ class YellowFollower:
 
         # Parameters
         self.min_contour_area = 500
+        self.center_x = 320  # Center of the camera image
+        self.center_y = 240
+        self.fov_horizontal = 60  # Horizontal field of view in degrees
         self.search_rotation_speed = 0.2
         self.focal_length_px = 554
         self.real_yellow_width_m = 0.2
-        self.stop_distance_m = 0.09
+        self.stop_distance_m = 0.05
         self.max_distance_from_start_m = 1.5
         self.rotation_duration = 10.0
 
@@ -84,14 +87,25 @@ class YellowFollower:
 
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
-
             mask = cv2.inRange(hsv, self.lower_yellow, self.upper_yellow)
             mask = cv2.erode(mask, None, iterations=2)
             mask = cv2.dilate(mask, None, iterations=2)
 
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             mask_area = 0  # Total yellow area in the current mask
-
+            
+            # Get centroid of the largest contour
+            if contours:
+                largest_contour = max(contours, key=cv2.contourArea)
+                M = cv2.moments(largest_contour)
+                if M["m00"] != 0:
+                    cX = int(M["m10"] / M["m00"])
+                    cY = int(M["m01"] / M["m00"])
+                else:
+                    cX, cY = self.center_x, self.center_y  # Default to center if no moment
+            else:
+                cX, cY = self.center_x, self.center_y
+            
             if contours:
                 for contour in contours:
                     mask_area += cv2.contourArea(contour)  # Accumulate area for all yellow contours
@@ -133,6 +147,10 @@ class YellowFollower:
                 angle_diff = angle_to_target - yaw_cur
                 angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
+                # Calculate angle error to center the yellow object
+                err_x = float(cX - self.center_x) / self.center_x
+                angle_adjust = -err_x * 0.3  # Adjust gain as needed
+
                 if dist_to_target <= self.stop_distance_m:
                     rospy.loginfo("Reached target zone")
                     print("open gripper")
@@ -156,7 +174,7 @@ class YellowFollower:
                         self.twist.linear.x = 0
                         self.twist.angular.z = 0.4 if angle_diff > 0 else -0.4
                     else:
-                        self.twist.angular.z = 0
+                        self.twist.angular.z = angle_adjust  # Use PID control to maintain center
                         self.twist.linear.x = speed
 
                 self.cmd_vel_pub.publish(self.twist)
@@ -169,7 +187,8 @@ class YellowFollower:
                 elif self.searching:
                     cv2.putText(cv_image, "Searching for Yellow", (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
+                
+                cv2.circle(cv_image, (cX, cY), 5, (255, 255, 255), -1)  # Display centroid
                 cv2.imshow("Camera View", cv_image)
                 cv2.imshow("Processed Mask", mask)
                 cv2.waitKey(3)
