@@ -34,7 +34,7 @@ class CombinedNode:
             self.SEARCHING: 20.0,
             self.APPROACHING: 15.0,
             self.POSITIONING: 10.0,
-            self.GRABBING: 5.0,
+            self.GRABBING: 10.0,  # Increased grabbing timeout for load check
             self.GRABBED: 3.0,
             self.MOVING_TO_YELLOW: 30.0,  # Timeout for moving to yellow
             self.RELEASING: 5.0,  # Timeout for releasing
@@ -64,6 +64,7 @@ class CombinedNode:
         self.right_distance = float('inf')
         self.current_servo_load = 0.0 # servo load
         self.peg_grabbed = False # Add a flag to track if the peg is grabbed
+        self.servo_load_threshold = 5.0 # Adjust this value based on testing
 
         # --- Yellow Follower Parameters and Variables ---
         self.searching_yellow = True
@@ -81,6 +82,9 @@ class CombinedNode:
         self.start_pose = None
         self.current_pose = None
         self.target_pose = None
+
+        # Subscribe to the servo load topic
+        self.servo_load_sub = rospy.Subscriber('/servoLoad', Float64, self.servo_load_callback)
 
         rospy.loginfo("Combined Node initialized")
 
@@ -291,15 +295,22 @@ class CombinedNode:
         rospy.loginfo("Grabbing red peg")
         self.move(0, 0)  # Stop moving
         self.control_gripper(1000)  # Close the gripper
-        rospy.sleep(2)  # Simulate grabbing
+        grab_start_time = rospy.Time.now()
 
-        # Check servo load (optional)
-        #if self.current_servo_load > SOME_THRESHOLD:
-        rospy.loginfo("Peg grabbed, transitioning to MOVING_TO_YELLOW")
-        self.transition_to(self.GRABBED)
-        #else:
-        #    rospy.loginfo("Grab failed, retrying")
-        #    self.transition_to(self.POSITIONING)  # Retry positioning
+        while (rospy.Time.now() - grab_start_time).to_sec() < self.state_timeout[self.GRABBING]:
+            rospy.sleep(0.1)  # Check servo load frequently
+
+            if self.current_servo_load > self.servo_load_threshold:
+                rospy.loginfo("Peg grabbed successfully!")
+                rospy.loginfo(f"Servo Load: {self.current_servo_load}")
+                self.peg_grabbed = True
+                self.transition_to(self.MOVING_TO_YELLOW)
+                return  # Exit the GRABBING state immediately
+
+        # If servo load doesn't reach threshold
+        rospy.logwarn("Failed to grab peg, servo load insufficient!")
+        self.control_gripper(0)  # Open gripper
+        self.transition_to(self.SEARCHING)
 
     def hold_grabbed(self):
         rospy.loginfo("Holding grabbed peg")
