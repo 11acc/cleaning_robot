@@ -74,7 +74,7 @@ class LineFollower:
                     cv2.circle(mask, (cx, int(mask.shape[0] / 2)), 5, (255, 0, 0), -1)
 
                     # Set forward speed and adjust angular speed based on error
-                    self.twist.linear.x = 0.15
+                    self.twist.linear.x = 0.10 # Move forward at a constant speed
                     self.twist.angular.z = -float(error) / 250.0 # Use smaller gain (increase the divisor) to make turning less sensitive
                 else:
                     # No valid mass found; rotate to search for line
