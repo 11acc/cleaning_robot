@@ -101,6 +101,18 @@ class YellowFollower:
                     if y + h > (self.image_height * 0.75):  # Check if the bottom of the bounding box is in the lower 25% of the image
                         bottom_yellow = True
 
+            else:  # No yellow detected in this frame
+                rospy.loginfo("Yellow lost, opening gripper")
+                print("open gripper")
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0
+                self.approaching = False  # Ensure approaching is false
+                self.searching = False  # Ensure searching is false
+                self.stopped_at_target = True
+                self.returning = True
+                self.cmd_vel_pub.publish(self.twist)
+                return
+
             if self.searching:
                 if not self.recording_360:
                     rospy.loginfo("Starting 360 degree scan...")
@@ -146,16 +158,7 @@ class YellowFollower:
                     self.approaching = False
                     self.stopped_at_target = True
                     self.returning = True
-                    self.cmd_vel_pub.publish(self.twist)  # Ensure the robot stops
-
-                #elif not contours:  # Yellow lost during approach - REMOVE THIS CONDITION
-                #    rospy.loginfo("Yellow lost, stopping and returning")
-                #    print("open gripper")
-                #    self.twist.linear.x = 0
-                #    self.twist.angular.z = 0
-                #    self.approaching = False
-                #    self.stopped_at_target = True
-                #    self.returning = True
+                    self.cmd_vel_pub.publish(self.twist)
 
                 elif dist_to_target <= self.stop_distance_m:
                     rospy.loginfo("Reached target zone")
@@ -165,7 +168,7 @@ class YellowFollower:
                     self.approaching = False
                     self.stopped_at_target = True
                     self.returning = True
-                    self.cmd_vel_pub.publish(self.twist) # Ensure the robot stops
+                    self.cmd_vel_pub.publish(self.twist)
 
                 else:
                     max_speed = 0.15
