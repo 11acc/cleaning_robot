@@ -1,0 +1,4 @@
+<launch>
+    <node pkg="cleaning_robot" type="follow_line.py" name="follow_line" output="screen">
+    </node>
+</launch>
