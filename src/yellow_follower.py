@@ -32,20 +32,18 @@ class YellowFollower:
         self.min_contour_area = 500
 
         # Camera and object parameters (adjust these to your setup)
-        self.focal_length_px = 554  # Replace with your camera's focal length in pixels
-        self.real_yellow_width_m = 0.2  # Real width of yellow zone in meters
-        self.stop_distance_m = 0.05  # Stop distance in meters (5 cm)
+        self.focal_length_px = 554
+        self.real_yellow_width_m = 0.2
+        self.stop_distance_m = 0.1  # Increased for smoother stop
 
-        # HSV thresholds for yellow (widened for lighting variations)
+        # HSV thresholds for yellow
         self.lower_yellow = np.array([15, 60, 100])
         self.upper_yellow = np.array([40, 255, 255])
 
         # Odometry poses
-        self.start_pose = None  # (x, y, yaw)
-        self.current_pose = None  # (x, y, yaw)
-
-        # Fixed target pose (set once when yellow first detected)
-        self.target_pose = None  # (x, y)
+        self.start_pose = None
+        self.current_pose = None
+        self.target_pose = None
 
         rospy.loginfo("YellowFollower node started, waiting for odometry and camera data...")
 
@@ -61,20 +59,17 @@ class YellowFollower:
 
     def image_callback(self, msg):
         try:
-            # If entire cycle completed, stop and do nothing
             if self.completed:
                 self.twist.linear.x = 0
                 self.twist.angular.z = 0
                 self.cmd_vel_pub.publish(self.twist)
                 return
 
-            # If stopped at target and returning, run return controller and skip image processing
             if self.stopped_at_target and self.returning:
                 self.return_to_start()
                 self.cmd_vel_pub.publish(self.twist)
                 return
 
-            # If stopped at target but not returning yet, hold position
             if self.stopped_at_target and not self.returning:
                 self.twist.linear.x = 0
                 self.twist.angular.z = 0
@@ -91,7 +86,6 @@ class YellowFollower:
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             if contours and self.target_pose is None:
-                # Only detect target once
                 largest_contour = max(contours, key=cv2.contourArea)
                 contour_area = cv2.contourArea(largest_contour)
 
@@ -104,9 +98,10 @@ class YellowFollower:
                     error_x = (cx - width / 2) / (width / 2)
 
                     x, y, w, h = cv2.boundingRect(largest_contour)
-                    distance = (self.focal_length_px * self.real_yellow_width_m) / w
+                    box_width = max(w, h)
+                    distance = (self.focal_length_px * self.real_yellow_width_m) / box_width
 
-                    rospy.loginfo(f"Yellow zone detected - setting fixed target")
+                    rospy.loginfo("Yellow zone detected - setting fixed target")
 
                     if self.current_pose is not None:
                         x_robot, y_robot, yaw_robot = self.current_pose
@@ -119,7 +114,6 @@ class YellowFollower:
                         self.searching = False
                         self.approaching = True
 
-            # If target_pose set, approach it
             if self.target_pose is not None and self.current_pose is not None and not self.stopped_at_target:
                 x_cur, y_cur, yaw_cur = self.current_pose
                 target_x, target_y = self.target_pose
@@ -137,11 +131,11 @@ class YellowFollower:
                     self.twist.angular.z = 0
                     self.approaching = False
                     self.stopped_at_target = True
-                    self.returning = True  # Start return after stopping
+                    self.returning = True
                 else:
                     max_speed = 0.15
-                    min_speed = 0.02
-                    slow_down_radius = 0.3
+                    min_speed = 0.05
+                    slow_down_radius = 0.4
 
                     if dist_to_target < slow_down_radius:
                         speed = min_speed + (max_speed - min_speed) * (dist_to_target / slow_down_radius)
@@ -194,7 +188,6 @@ class YellowFollower:
         angle_diff = angle_to_goal - yaw_cur
         angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
-        # First, position control
         if distance > self.stop_distance_m:
             if abs(angle_diff) > 0.05:
                 self.twist.linear.x = 0
@@ -204,7 +197,6 @@ class YellowFollower:
                 self.twist.angular.z = 0
             return
 
-        # Then, orientation control once position is reached
         yaw_diff = yaw_start - yaw_cur
         yaw_diff = (yaw_diff + math.pi) % (2 * math.pi) - math.pi
 
@@ -212,12 +204,11 @@ class YellowFollower:
             self.twist.linear.x = 0
             self.twist.angular.z = 0.3 if yaw_diff > 0 else -0.3
         else:
-            # Reached position and orientation
             rospy.loginfo("Returned to start pose with correct orientation - stopping")
             self.twist.linear.x = 0
             self.twist.angular.z = 0
             self.returning = False
-            self.completed = True  # Mark entire cycle done
+            self.completed = True
 
 if __name__ == '__main__':
     try:
