@@ -46,6 +46,9 @@ class YellowFollower:
         # Dynamic target pose
         self.target_pose = None  # (x, y)
 
+        # Added search direction
+        self.search_direction = -0.3  # Adjust to change direction/speed
+
         rospy.loginfo("YellowFollower node started, waiting for odometry and camera data...")
 
     def odom_callback(self, msg):
@@ -132,7 +135,15 @@ class YellowFollower:
 
             else:
                 # No yellow detected
-                if self.approaching:
+                self.target_pose = None  # clear target
+                self.approaching = False
+                if self.searching:
+                    rospy.loginfo("Searching for Yellow, turning left")
+                    self.twist.linear.x = 0.0  # stop moving forward
+                    self.twist.angular.z = self.search_direction  # Turn left
+                    self.cmd_vel_pub.publish(self.twist)
+                    return
+                elif self.approaching:
                     rospy.loginfo("Yellow lost, stopping and returning")
                     print("open gripper")
                     self.twist.linear.x = 0
