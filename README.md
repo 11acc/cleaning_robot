@@ -1,103 +1,113 @@
-# Cleaning Robot
 
-### Task Breakdown:
+## Cleaning Robot
 
----
+This repository contains code which define ROS nodes that enable a robot to complete a cleaning challenge.
 
-### **1. Initialize the System:**
+The repository is structed as a ROS package and should be treated as one. Therefore the repository needs to be cloned inside a catkin workspace such that:
 
-- **Set up ROS Node**: Start the ROS node for the robot.
-- **Create Subscribers and Publishers**:
-  - Subscribe to the camera feed (`/camera/color/image_raw`) to receive images from the robot's camera.
-  - Publish velocity commands (`/cmd_vel`) to control the robot's movement.
+```
+~/catkin_ws/
+├── build/                # Holds temporary build files (created by catkin_make)
+│   └── ...
+├── devel/                # Holds built packages and setup scripts (created by catkin_make)
+│   └── ...
+└── src/                  # Holds different created ROS packages
+    ├── cleaning_robot/   # Our repository
+    │   ├── launch/
+    │   │   └── ...       # Launch files for each script
+    │   ├── src/
+    │   │   ├── complete_bot.py                  # Orchestrator script
+    │   │   ├── line_follower_state_machine.py   # Line following functionality
+    │   │   ├── red_peg_grabber.py               # Peg identification and manipulation
+    │   │   └── yellow_follower.py               # Deploy zone navigation
+    │   ├── CMakeLists.txt                       # How to build and link the code and dependencies
+    │   └── package.xml                          # Package's metadata and dependencies for ROS
+    └── ...
+```
 
----
+Once the repository is setup correctly, in order to execute any given script the system requires at least two terminal sessions:
+1. Terminal 1: SSH into the robot to establish the gripper connection
+2. Terminal 2: Execute your scripts from your local machine
 
-### **2. Start Line Following:**
+### Terminal 1: Robot Gripper Setup
 
-#### **Image Processing:**
+#### 1. SSH into the robot
+```bash
+$ ssh husarion@agamemnon
+# pass: husarion
+```
 
-- Capture images using the camera and process them to follow the line.
-- Crop the lower half of the image to focus on the floor (where the line is).
-- Convert the image to **HSV (Hue, Saturation, Value)** for better color segmentation.
-- Apply a threshold to identify the **white line** used for line following.
+#### 2. Setting up ROS Serial for the gripper
+```bash
+# If ROS Serial isn't installed
+$ cd ~/husarion_ws/src/
+$ git clone https://github.com/ros-drivers/rosserial.git
 
-#### **Calculate the Error:**
+# Compile the workspace
+$ cd ~/husarion_ws/
+$ catkin_make
+$ catkin_install
+```
 
-- Find the center of the white region of the line.
-- Calculate the error between the center of mass of the line and the center of the image.
+#### 3. Connect to the Arduino
+```bash
+# Identify the Arduino port
+$ ls /dev/ttyUSB*
 
-#### **Adjust Robot’s Movement:**
+# Run the serial node, leave this terminal running
+$ rosrun rosserial_python serial_node.py /dev/ttyUSB1
+```
 
-- Based on the error, adjust the robot’s **linear** and **angular** velocities to keep the robot on the line.
+#### 4. (Optional) Gripper Manual Controls
+```bash
+# Move the gripper to a specific angle (0-170)
+$ rostopic pub /servo std_msgs/UInt16 "data: [angle]"
 
----
+# Monitor the servo load
+$ rostopic echo /servoLoad
+```
 
-### **3. Detect Pegs (Red, Green, Blue):**
+### Terminal 2: Script Execution
 
-#### **Image Processing for Peg Detection:**
+#### 1. Configure ROS environment
+```bash
+# Setup ROS environment
+$ source /opt/ros/noetic/setup.bash
 
-- Convert the cropped image to **HSV**.
-- Apply color masks to detect **red**, **green**, and **blue** pegs by defining their respective HSV color ranges.
-- Find contours for each color (red, green, and blue) in the mask.
+# Connect to the robot's ROS Master
+$ export ROS_MASTER_URI=http://[ROBOT_IP]:11311
 
-#### **Identify Pegs:**
+# Set your computer's IP for response routing
+$ export ROS_IP=[COMPUTER_IP]
 
-- For each color, identify the largest contour (representing a peg).
-- If a peg is detected and the robot is not currently carrying a peg, set the `has_peg` flag to **True** and simulate grabbing the peg.
+# To find your IP address:
+$ ifconfig
 
----
+# Verify the connection by viewing the ROS topics
+$ rostopic list
+```
 
-### **4. Move Pegs to Correct Zone:**
+#### 2. Prepare and run your scripts
+```bash
+# Make sure you're in the root of the workspace
+$ cd ~/catkin_ws/
 
-#### **Determine Direction:**
+# Source the workspace and compile (first time or after big changes)
+$ source devel/setup.bash
+$ catkin_make
 
-- Check the current direction of the robot. The direction will determine whether the deploy zone is to the left or right of the robot.
+# Launch a script
+$ roslaunch cleaning_robot red_peg_grabber.launch
+```
 
-#### **Move to Deploy Zone (for Green Peg):**
+#### 3. Update cleaning_robot repository
+```bash
+# Pull the latest changes
+$ cd ~/catkin_ws/src/cleaning_robot/
+$ git pull
+```
 
-- If a green peg is detected, and the robot is carrying the peg (`has_peg = True`), decide which direction to go based on the robot’s position.
-- Turn the robot to the correct direction (left or right).
-- Move the robot to the deploy zone.
-
-#### **Release the Green Peg:**
-
-- Once in the deploy zone, stop the robot.
-- Simulate releasing the green peg by setting `has_peg` to **False** and printing a message to indicate the release.
-
-#### **Move Red or Blue Pegs Outside the Perimeter:**
-
-- If a red or blue peg is detected, and the robot is carrying the peg, turn the robot in the opposite direction (left or right) to move outside the perimeter.
-- Move the robot outside the perimeter (simulated by moving for a short duration).
-
-#### **Release Red or Blue Peg:**
-
-- Once outside the perimeter, stop the robot and release the peg by setting `has_peg` to **False**.
-
----
-
-### **5. Return to the Original Position:**
-
-#### **Determine Position:**
-
-- Track the original position before the robot leaves the line (when the peg is grabbed).
-
-#### **Navigate Back to the Original Position:**
-
-- Use the **line-following algorithm** to return to the original position after releasing the peg (whether it’s a green peg in the deploy zone or a red/blue peg outside the perimeter).
-
-#### **Resume Line Following:**
-
-- Once the robot returns to the original position, it resumes its line-following behavior.
-
----
-
-### **Workflow Summary:**
-
-- **Initialize** the system (ROS node, camera feed, and publishers).
-- **Follow the line** using image processing and error correction.
-- **Detect pegs** (red, green, and blue) and grab them when detected.
-- **Move the pegs** to the correct zone (green to the deploy zone, red/blue outside the perimeter) and release the peg and back away as to not tip it over when turning in text step.
-- **Return** to the original position and **resume line following** after releasing the peg.
-
----
+### Troubleshooting
+- If the gripper isn't responding, make sure the Arduino is connected to the correct USB port
+- If `rostopic list` doesn't show any topics, check network connectivity between your machine and the robot
+- Make sure both ROS_MASTER_URI and ROS_IP are correctly set to the respective IP addresses
