@@ -15,9 +15,10 @@ class RedPegGrabber:
         
         # State definitions
         self.WAITING = 0
-        self.GRABBING = 1
-        self.HOLDING = 2
-        self.RELEASING = 3
+        self.APPROACHING = 1 # New state
+        self.GRABBING = 2
+        self.HOLDING = 3
+        self.RELEASING = 4
         
         self.state = self.WAITING
         self.rate = rospy.Rate(10)  # 10Hz
@@ -63,6 +64,8 @@ class RedPegGrabber:
         # Thresholds
         self.min_area = 1000  # Minimum area to consider a valid red peg
         self.center_threshold = 50  # Pixels from center to consider centered
+        self.distance_threshold = 0.03 # 3 cm distance threshold
+        self.approach_speed = 0.1 # Approach speed
         
         rospy.loginfo("Simple Red Peg Grabber initialized")
     
@@ -154,6 +157,8 @@ class RedPegGrabber:
                     
                     if self.state == self.WAITING:
                         state_str = "WAITING"
+                    elif self.state == self.APPROACHING:
+                        state_str = "APPROACHING"
                     elif self.state == self.GRABBING:
                         state_str = "GRABBING"  
                     elif self.state == self.HOLDING:
@@ -166,7 +171,7 @@ class RedPegGrabber:
                     if (rospy.Time.now() - self.last_log_time).to_sec() >= 1.0:
                         self.last_log_time = rospy.Time.now()
                         rospy.loginfo(f"Detection stats: Area={area}, X-offset={x_offset}, " +
-                                     f"Detected={self.detection_count}, Centered={self.centered_count} in last second")
+                                      f"Detected={self.detection_count}, Centered={self.centered_count} in last second")
                         # Reset counters
                         self.detection_count = 0
                         self.centered_count = 0
@@ -213,6 +218,20 @@ class RedPegGrabber:
         cmd.angular.z = 0.0
         self.cmd_vel_pub.publish(cmd)
     
+    def move_forward(self, speed):
+        cmd = Twist()
+        cmd.linear.x = speed
+        cmd.angular.z = 0.0
+        self.cmd_vel_pub.publish(cmd)
+
+    def turn_right(self):
+        cmd = Twist()
+        cmd.linear.x = 0.0
+        cmd.angular.z = -0.5  # Adjust as needed
+        self.cmd_vel_pub.publish(cmd)
+        rospy.sleep(2.0)  # Adjust duration as needed
+        self.stop_robot()
+    
     def run(self):
         # Start with gripper open
         self.open_gripper()
@@ -231,10 +250,26 @@ class RedPegGrabber:
                 
                 # Check if red peg is detected and centered
                 if self.red_peg_detected and self.red_peg_centered:
-                    rospy.loginfo(f"Red peg detected and centered! Area: {self.red_peg_area} Transitioning to GRABBING")
+                    rospy.loginfo(f"Red peg detected and centered! Area: {self.red_peg_area} Transitioning to APPROACHING")
                     self.stop_robot()
+                    self.state = self.APPROACHING
+                    self.last_state_change = rospy.Time.now()
+            
+            elif self.state == self.APPROACHING:
+                # Log if approaching is taking too long
+                if state_duration > 5.0:
+                    rospy.logwarn(f"APPROACHING state has been active for {state_duration:.1f} seconds!")
+                
+                # Move forward until the distance is less than the threshold
+                if self.front_distance > self.distance_threshold:
+                    self.move_forward(self.approach_speed)
+                    rospy.loginfo(f"Approaching. Distance to object: {self.front_distance:.2f} meters")
+                else:
+                    self.stop_robot()
+                    rospy.loginfo(f"Reached the distance threshold. Transitioning to GRABBING. Distance: {self.front_distance:.2f} meters")
                     self.state = self.GRABBING
                     self.last_state_change = rospy.Time.now()
+
             
             elif self.state == self.GRABBING:
                 # Log if grabbing is taking too long
@@ -269,6 +304,9 @@ class RedPegGrabber:
                 if state_duration > 3.0:
                     rospy.logwarn(f"RELEASING state has been active for {state_duration:.1f} seconds!")
                 
+                # Turn right
+                self.turn_right()
+
                 # Open the gripper to release the peg
                 self.open_gripper()
                 
