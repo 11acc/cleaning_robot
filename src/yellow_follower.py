@@ -37,7 +37,7 @@ class YellowFollower:
         self.search_rotation_speed = 0.2
         self.focal_length_px = 554
         self.real_yellow_width_m = 0.2
-        self.stop_distance_m = 0.05
+        self.stop_distance_m = 0.03
         self.max_distance_from_start_m = 1.5
         self.rotation_duration = 10.0
 
