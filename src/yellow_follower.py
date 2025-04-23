@@ -6,46 +6,52 @@ from nav_msgs.msg import Odometry
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-from tf.transformations import euler_from_quaternion
 import math
+from tf.transformations import euler_from_quaternion
 
 class YellowFollower:
     def __init__(self):
         rospy.init_node('yellow_follower')
         self.bridge = CvBridge()
 
-        # Publishers and Subscribers
+        # Publishers & Subscribers
         self.image_sub = rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
-        # Movement
+        # Motion state
         self.twist = Twist()
-
-        # Flags
         self.target_pose = None
         self.current_pose = None
         self.start_pose = None
         self.returning = False
         self.cycle_complete = False
 
-        # Detection Parameters
-        self.min_contour_area = 500
+        # Parameters
+        self.focal_length_px = 554         # Camera focal length
+        self.real_target_width = 0.2       # Width of yellow zone in meters
+        self.stop_distance = 0.05          # How close to stop (meters)
+        self.min_area = 500                # Minimum area to validate detection
+        self.slow_down_radius = 0.4        # Start slowing when within this distance
+        self.max_speed = 0.25
+        self.min_speed = 0.05
+
+        # Yellow detection range (tweak as needed)
         self.lower_yellow = np.array([15, 60, 100])
         self.upper_yellow = np.array([40, 255, 255])
-        self.focal_length_px = 554
-        self.real_yellow_width_m = 0.2
-        self.stop_distance_m = 0.02  # Stop a bit earlier
+
         rospy.loginfo("YellowFollower node initialized.")
 
     def odom_callback(self, msg):
         pos = msg.pose.pose.position
         ori = msg.pose.pose.orientation
-        _, _, yaw = euler_from_quaternion([ori.x, ori.y, ori.z, ori.w])
+        orientation = [ori.x, ori.y, ori.z, ori.w]
+        _, _, yaw = euler_from_quaternion(orientation)
         self.current_pose = (pos.x, pos.y, yaw)
+
         if self.start_pose is None:
             self.start_pose = self.current_pose
-            rospy.loginfo("Start pose recorded.")
+            rospy.loginfo(f"Start pose recorded: {self.start_pose}")
 
     def image_callback(self, msg):
         if self.cycle_complete:
@@ -57,88 +63,91 @@ class YellowFollower:
             self.cmd_vel_pub.publish(self.twist)
             return
 
-        if self.target_pose is None:
-            self.detect_yellow_zone(msg)
-
-        if self.target_pose and self.current_pose:
-            self.navigate_to_target()
-            self.cmd_vel_pub.publish(self.twist)
-
-    def detect_yellow_zone(self, msg):
-        cv_img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        hsv = cv2.cvtColor(cv_img, cv2.COLOR_BGR2HSV)
+        image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lower_yellow, self.upper_yellow)
         mask = cv2.erode(mask, None, iterations=2)
         mask = cv2.dilate(mask, None, iterations=2)
 
-        cnts, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if cnts:
-            c = max(cnts, key=cv2.contourArea)
-            area = cv2.contourArea(c)
-            if area > self.min_contour_area:
-                M = cv2.moments(c)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            largest = max(contours, key=cv2.contourArea)
+            if cv2.contourArea(largest) > self.min_area:
+                M = cv2.moments(largest)
+                if M['m00'] == 0:
+                    return
                 cx = int(M['m10'] / M['m00'])
-                x, y, w, h = cv2.boundingRect(c)
-                distance = (self.focal_length_px * self.real_yellow_width_m) / w
-                error_x = (cx - cv_img.shape[1] / 2) / (cv_img.shape[1] / 2)
-                if self.current_pose:
-                    x_r, y_r, yaw = self.current_pose
-                    offset = error_x * self.real_yellow_width_m
-                    tx = x_r + distance * math.cos(yaw) - offset * math.sin(yaw)
-                    ty = y_r + distance * math.sin(yaw) + offset * math.cos(yaw)
-                    self.target_pose = (tx, ty)
-                    rospy.loginfo(f"Target pose set: x={tx:.2f}, y={ty:.2f}")
+                x, y, w, h = cv2.boundingRect(largest)
+                image_center = image.shape[1] / 2
+                error_x = (cx - image_center) / image_center
+                distance = (self.focal_length_px * self.real_target_width) / w
 
-    def navigate_to_target(self):
+                if self.current_pose:
+                    xr, yr, yaw = self.current_pose
+                    lat_offset = error_x * self.real_target_width
+                    tx = xr + distance * math.cos(yaw) - lat_offset * math.sin(yaw)
+                    ty = yr + distance * math.sin(yaw) + lat_offset * math.cos(yaw)
+                    self.target_pose = (tx, ty)
+
+        if self.target_pose and self.current_pose:
+            self.move_to_target()
+            self.cmd_vel_pub.publish(self.twist)
+
+    def move_to_target(self):
         x, y, yaw = self.current_pose
         tx, ty = self.target_pose
-        dx, dy = tx - x, ty - y
-        dist = math.hypot(dx, dy)
-        angle_to = math.atan2(dy, dx)
-        d_angle = (angle_to - yaw + math.pi) % (2 * math.pi) - math.pi
 
-        if dist < self.stop_distance_m:
-            rospy.loginfo("Reached target zone, starting return.")
+        dx = tx - x
+        dy = ty - y
+        distance = math.hypot(dx, dy)
+        target_angle = math.atan2(dy, dx)
+        angle_diff = (target_angle - yaw + math.pi) % (2 * math.pi) - math.pi
+
+        if distance < self.stop_distance:
+            rospy.loginfo("Arrived at target. Returning to start.")
             self.twist = Twist()
             self.returning = True
             return
 
-        # Movement logic
-        max_spd, min_spd = 0.3, 0.05
-        slowdown_radius = 0.5
-        spd = min_spd + (max_spd - min_spd) * min(dist / slowdown_radius, 1.0)
-        spd = max(spd, min_spd)
+        speed = self.min_speed + (self.max_speed - self.min_speed) * min(distance / self.slow_down_radius, 1.0)
 
-        if abs(d_angle) > 0.1:
+        if abs(angle_diff) > 0.1:
             self.twist.linear.x = 0
-            self.twist.angular.z = 0.5 if d_angle > 0 else -0.5
+            self.twist.angular.z = 0.5 if angle_diff > 0 else -0.5
         else:
-            self.twist.linear.x = spd
+            self.twist.linear.x = speed
             self.twist.angular.z = 0
 
     def return_to_start(self):
+        if not self.start_pose or not self.current_pose:
+            return
+
         x, y, yaw = self.current_pose
         sx, sy, syaw = self.start_pose
-        dx, dy = sx - x, sy - y
-        dist = math.hypot(dx, dy)
-        angle_to = math.atan2(dy, dx)
-        d_angle = (angle_to - yaw + math.pi) % (2 * math.pi) - math.pi
 
-        if dist > self.stop_distance_m:
-            if abs(d_angle) > 0.1:
+        dx = sx - x
+        dy = sy - y
+        distance = math.hypot(dx, dy)
+        target_angle = math.atan2(dy, dx)
+        angle_diff = (target_angle - yaw + math.pi) % (2 * math.pi) - math.pi
+
+        if distance > self.stop_distance:
+            if abs(angle_diff) > 0.1:
                 self.twist.linear.x = 0
-                self.twist.angular.z = 0.4 if d_angle > 0 else -0.4
+                self.twist.angular.z = 0.4 if angle_diff > 0 else -0.4
             else:
-                self.twist.linear.x = 0.2
+                self.twist.linear.x = 0.15
                 self.twist.angular.z = 0
         else:
+            # Final orientation adjustment
             yaw_diff = (syaw - yaw + math.pi) % (2 * math.pi) - math.pi
             if abs(yaw_diff) > 0.1:
                 self.twist.linear.x = 0
-                self.twist.angular.z = 0.4 if yaw_diff > 0 else -0.4
+                self.twist.angular.z = 0.3 if yaw_diff > 0 else -0.3
             else:
-                rospy.loginfo("Returned to start pose. Cycle complete.")
+                rospy.loginfo("Back to start position and orientation.")
                 self.twist = Twist()
+                self.returning = False
                 self.cycle_complete = True
 
 if __name__ == '__main__':
