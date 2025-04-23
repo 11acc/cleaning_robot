@@ -13,11 +13,13 @@ class LineFollower:
         # Initialize the ROS node
         rospy.init_node('line_follower', anonymous=True)
         
-        self.bridge = CvBridge() # Bridge to convert ROS images to OpenCV format
+        self.bridge = CvBridge()# Bridge to convert ROS images to OpenCV format
         self.twist = Twist() # Twist message to store movement commands
 
-        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10) # Publisher to send movement commands to the robot
-        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback) # Subscriber to get image data from the robot's camera
+        # Publisher to send movement commands to the robot
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        # Subscriber to get image data from the robot's camera
+        rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback)
 
         # HSV range for detecting the black line
         self.lower_black = np.array([0, 0, 0])
