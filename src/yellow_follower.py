@@ -151,7 +151,7 @@ class YellowFollower:
                 err_x = float(cX - self.center_x) / self.center_x
                 angle_adjust = -err_x * 0.3  # Adjust gain as needed
 
-                if dist_to_target <= self.stop_distance_m:
+                if dist_to_target <= self.stop_distance_m +0.05:
                     rospy.loginfo("Reached target zone")
                     print("open gripper")
                     self.twist.linear.x = 0
