@@ -319,10 +319,16 @@ class CombinedNode:
         self.transition_to(self.MOVING_TO_YELLOW)
 
     def move_to_yellow(self):
-        rospy.loginfo("Moving to yellow zone")
-        self.searching_yellow = True
-        self.approaching_yellow = False
-        self.process_yellow_detection(self.current_image)
+         rospy.loginfo("Moving to yellow zone")
+         self.searching_yellow = True
+         self.approaching_yellow = False
+
+         while not rospy.is_shutdown() and self.searching_yellow:
+            self.process_yellow_detection(self.current_image)
+            self.rate.sleep()
+
+         if not self.searching_yellow:
+            rospy.loginfo("Yellow zone found, moving towards it")
 
     def release(self):
         rospy.loginfo("Releasing red peg")
