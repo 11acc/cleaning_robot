@@ -32,10 +32,8 @@ class YellowFollower:
         self.min_contour_area = 500
         self.focal_length_px = 554  # Replace with your camera's focal length in pixels
         self.real_yellow_width_m = 0.2  # Real width of yellow zone in meters
-        self.stop_distance_m = 0.3  # Increased stop distance
-        self.search_speed = 0.2
-        self.approach_speed = 0.1
-        self.max_distance_from_start_m = 1.5
+        self.stop_distance_m = 0.05  # Stop distance in meters (5 cm)
+        self.max_distance_from_start_m = 1.5  # Maximum distance from start pose
 
         # HSV thresholds for yellow (widened for lighting variations)
         self.lower_yellow = np.array([15, 60, 100])
@@ -44,9 +42,8 @@ class YellowFollower:
         # Odometry poses
         self.start_pose = None  # (x, y, yaw)
         self.current_pose = None  # (x, y, yaw)
-        self.initial_yaw = None
 
-        # Fixed target pose (set once when yellow first detected)
+        # Dynamic target pose
         self.target_pose = None  # (x, y)
 
         rospy.loginfo("YellowFollower node started, waiting for odometry and camera data...")
@@ -58,8 +55,7 @@ class YellowFollower:
         (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
         self.current_pose = (position.x, position.y, yaw)
         if self.start_pose is None:
-            self.start_pose = (position.x, position.y, yaw)
-            self.initial_yaw = yaw
+            self.start_pose = self.current_pose
             rospy.loginfo(f"Recorded start pose: x={position.x:.2f}, y={position.y:.2f}, yaw={yaw:.2f}")
 
     def image_callback(self, msg):
@@ -93,11 +89,9 @@ class YellowFollower:
 
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            if contours and self.target_pose is None:
-                # Only detect target once
+            if contours:
                 largest_contour = max(contours, key=cv2.contourArea)
                 contour_area = cv2.contourArea(largest_contour)
-
                 if contour_area > self.min_contour_area:
                     M = cv2.moments(largest_contour)
                     cx = int(M['m10'] / M['m00'])
@@ -109,26 +103,35 @@ class YellowFollower:
                     x, y, w, h = cv2.boundingRect(largest_contour)
                     distance = (self.focal_length_px * self.real_yellow_width_m) / w
 
-                    rospy.loginfo(f"Yellow zone detected - setting fixed target")
-
                     if self.current_pose is not None:
                         x_robot, y_robot, yaw_robot = self.current_pose
                         lateral_offset = error_x * self.real_yellow_width_m
                         target_x = x_robot + distance * math.cos(yaw_robot) - lateral_offset * math.sin(yaw_robot)
                         target_y = y_robot + distance * math.sin(yaw_robot) + lateral_offset * math.cos(yaw_robot)
-                        self.target_pose = (target_x, target_y)
-                        rospy.loginfo(f"Fixed target pose set at x={target_x:.2f}, y={target_y:.2f}")
 
+                        self.target_pose = (target_x, target_y)
                         self.searching = False
                         self.approaching = True
-            elif contours and self.target_pose is not None:
-                # Check distance from start
-                x_start, y_start = self.start_pose
-                x_current, y_current, _ = self.current_pose
-                dist_from_start = math.sqrt((x_current - x_start)**2 + (y_current - y_start)**2)
 
-                if dist_from_start > self.max_distance_from_start_m:
-                    rospy.loginfo("Moved more than 1.5 m from start, stopping and returning")
+                        # Check distance from start
+                        x_start, y_start, _ = self.start_pose
+                        dist_from_start = math.sqrt((x_robot - x_start)**2 + (y_robot - y_start)**2)
+
+                        if dist_from_start > self.max_distance_from_start_m:
+                            rospy.loginfo("Moved more than 1.5 m from start, stopping and returning")
+                            print("open gripper")
+                            self.twist.linear.x = 0
+                            self.twist.angular.z = 0
+                            self.approaching = False
+                            self.stopped_at_target = True
+                            self.returning = True
+                            self.cmd_vel_pub.publish(self.twist)
+                            return
+
+            else:
+                # No yellow detected
+                if self.approaching:
+                    rospy.loginfo("Yellow lost, stopping and returning")
                     print("open gripper")
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0
@@ -137,7 +140,6 @@ class YellowFollower:
                     self.returning = True
                     self.cmd_vel_pub.publish(self.twist)
                     return
-
 
             # If target_pose set, approach it
             if self.target_pose is not None and self.current_pose is not None and not self.stopped_at_target:
@@ -151,7 +153,7 @@ class YellowFollower:
                 angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
                 if dist_to_target <= self.stop_distance_m:
-                    rospy.loginfo("Reached fixed target zone")
+                    rospy.loginfo("Reached target zone")
                     print("open gripper")
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0
@@ -176,21 +178,12 @@ class YellowFollower:
                         self.twist.angular.z = 0
                         self.twist.linear.x = speed
 
-            elif self.searching:
-                rospy.loginfo("Searching for Yellow")
-                self.twist.linear.x = 0.0
-                self.twist.angular.z = self.search_speed
-
-            else:
-                self.twist.linear.x = 0
-                self.twist.angular.z = 0
-
             self.cmd_vel_pub.publish(self.twist)
 
             # Visualization
             if cv_image is not None:
                 if self.target_pose is not None:
-                    cv2.putText(cv_image, "Fixed Target Set", (10, 30),
+                    cv2.putText(cv_image, "Target Set", (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 elif self.searching:
                     cv2.putText(cv_image, "Searching for Yellow", (10, 30),
@@ -206,15 +199,14 @@ class YellowFollower:
             self.cmd_vel_pub.publish(self.twist)
 
     def return_to_start(self):
-        if self.current_pose is None or self.start_pose is None or self.initial_yaw is None:
+        if self.current_pose is None or self.start_pose is None:
             rospy.logwarn_throttle(5, "Waiting for odometry data to return to start")
             self.twist.linear.x = 0
             self.twist.angular.z = 0
             return
 
         x_cur, y_cur, yaw_cur = self.current_pose
-        x_start, y_start = self.start_pose
-        yaw_start = self.initial_yaw
+        x_start, y_start, yaw_start = self.start_pose
 
         dx = x_start - x_cur
         dy = y_start - y_cur
@@ -248,8 +240,6 @@ class YellowFollower:
             self.twist.angular.z = 0
             self.returning = False
             self.completed = True  # Mark entire cycle done
-
-        self.cmd_vel_pub.publish(self.twist)
 
 if __name__ == '__main__':
     try:
