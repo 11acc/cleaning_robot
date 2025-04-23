@@ -146,15 +146,17 @@ class YellowFollower:
                     self.approaching = False
                     self.stopped_at_target = True
                     self.returning = True
+                    self.cmd_vel_pub.publish(self.twist)  # Ensure the robot stops
 
-                elif not contours:  # Yellow lost during approach
-                    rospy.loginfo("Yellow lost, stopping and returning")
-                    print("open gripper")
-                    self.twist.linear.x = 0
-                    self.twist.angular.z = 0
-                    self.approaching = False
-                    self.stopped_at_target = True
-                    self.returning = True
+                #elif not contours:  # Yellow lost during approach - REMOVE THIS CONDITION
+                #    rospy.loginfo("Yellow lost, stopping and returning")
+                #    print("open gripper")
+                #    self.twist.linear.x = 0
+                #    self.twist.angular.z = 0
+                #    self.approaching = False
+                #    self.stopped_at_target = True
+                #    self.returning = True
+
                 elif dist_to_target <= self.stop_distance_m:
                     rospy.loginfo("Reached target zone")
                     print("open gripper")
@@ -163,6 +165,8 @@ class YellowFollower:
                     self.approaching = False
                     self.stopped_at_target = True
                     self.returning = True
+                    self.cmd_vel_pub.publish(self.twist) # Ensure the robot stops
+
                 else:
                     max_speed = 0.15
                     min_speed = 0.02
