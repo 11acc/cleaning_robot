@@ -15,6 +15,10 @@ class LineFollower:
         
         self.bridge = CvBridge()# Bridge to convert ROS images to OpenCV format
         self.twist = Twist() # Twist message to store movement commands
+        
+        # Add control smoothing
+        self.prev_angular_z = 0.0
+        self.smooth_factor = 0.3  # Smooth factor for control
 
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)  # Publisher to send movement commands to the robot
         rospy.Subscriber('/camera/color/image_raw', Image, self.image_callback) # Subscribe to image data from the robot's camera
@@ -45,8 +49,9 @@ class LineFollower:
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         height, width, _ = cv_image.shape
 
-        # Crop for bottom 30% (increased from 20% to see more ahead)
-        crop_img = hsv[int(height * 0.70):height, :]
+        # Crop for bottom 20%
+        crop_start_y = int(height * 0.8)
+        crop_img = hsv[crop_start_y:height, :]
 
         # Apply Gaussian blur to reduce image noise
         blurred = cv2.GaussianBlur(crop_img, (5, 5), 0)
@@ -81,25 +86,34 @@ class LineFollower:
                     error_magnitude = abs(error)
                     self.twist.linear.x = base_speed * (1.0 - min(error_magnitude / 300.0, 0.7))
                     
-                    # Adjust angular speed based on error with adaptive gain
-                    self.twist.angular.z = -float(error) / gain
+                    # Calculate new angular velocity
+                    new_angular_z = -float(error) / gain
+                    
+                    # Apply smoothing to angular velocity
+                    self.twist.angular.z = self.smooth_factor * new_angular_z + (1 - self.smooth_factor) * self.prev_angular_z
+                    self.prev_angular_z = self.twist.angular.z
                 else:
-                    # No valid mass found; rotate to search for line
-                    self.twist.linear.x = 0.05  # Slower forward movement while searching
-                    self.twist.angular.z = 0.2  # Gentler rotation
+                    # No valid mass found; gentle rotation to search for line
+                    self.twist.linear.x = 0.05
+                    self.twist.angular.z = 0.2
+                    self.prev_angular_z = self.twist.angular.z
             else:
-                # Contour too small; rotate in place with gentler rotation
-                self.twist.linear.x = 0.05  # Slower forward movement while searching
-                self.twist.angular.z = 0.2  # Gentler rotation
+                # Contour too small; gentle rotation in place
+                self.twist.linear.x = 0.05
+                self.twist.angular.z = 0.2
+                self.prev_angular_z = self.twist.angular.z
         else:
-            # No contours found; rotate to find line with gentler rotation
-            self.twist.linear.x = 0.05  # Slower forward movement while searching
-            self.twist.angular.z = 0.2  # Gentler rotation
+            # No contours found; gentle rotation to find line
+            self.twist.linear.x = 0.05
+            self.twist.angular.z = 0.2
+            self.prev_angular_z = self.twist.angular.z
 
         # Publish the movement command
         self.cmd_pub.publish(self.twist)
 
-        # Show debug windows
+        # Show debug windows - also visualize the crop region on the original image
+        cv2.rectangle(cv_image, (0, crop_start_y), (width, height), (0, 255, 0), 2)
+        cv2.imshow("Original with ROI", cv_image)
         cv2.imshow("Cropped Image", crop_img)
         cv2.imshow("Mask", mask)
         cv2.waitKey(1)
@@ -107,7 +121,10 @@ class LineFollower:
         # Save an image at fixed intervals
         current_time = rospy.Time.now()
         if current_time - self.last_saved_time >= rospy.Duration(self.save_interval):
-            self.save_image(cv_image)
+            # Draw ROI on the saved image for debugging
+            debug_image = cv_image.copy()
+            cv2.rectangle(debug_image, (0, crop_start_y), (width, height), (0, 255, 0), 2)
+            self.save_image(debug_image)
             self.last_saved_time = current_time
 
     def save_image(self, image):
