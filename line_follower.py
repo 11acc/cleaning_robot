@@ -63,6 +63,7 @@ class LineFollower:
         
         rospy.loginfo("Press 'r' to toggle robot movement. Currently DISABLED.")
         rospy.loginfo("Press 'q' to quit the program.")
+        rospy.loginfo("Line follower node started, waiting for images...")
 
     # ─────────────── keyboard control functions ───────────────
     def keyboard_listener(self):
@@ -337,12 +338,14 @@ class LineFollower:
         right_bound = center_x_full + roi_width // 2
         roi = roi[:, left_bound:right_bound]
 
-        # ••• reduce noise with gaussian blur •••
-        blurred = cv2.GaussianBlur(roi, (5, 5), 0)
+        # ••• apply gaussian blur to reduce noise (enhanced from final_follower.py) •••
+        # First convert to HSV
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        # Then apply blur (using same kernel size as final_follower.py)
+        blurred = cv2.GaussianBlur(hsv, (5, 5), 0)
 
-        # ••• convert to HSV and create mask for black line •••
-        hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.lower_black, self.upper_black)
+        # ••• create mask for black line (now using blurred HSV) •••
+        mask = cv2.inRange(blurred, self.lower_black, self.upper_black)
         
         # ••• clean up noise with morphological operations •••
         kernel = np.ones((3, 3), np.uint8)  # Smaller kernel
@@ -406,6 +409,7 @@ class LineFollower:
             cv2.putText(roi, f"H-Line: {time_since:.1f}s", (roi.shape[1] - 120, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
+        # Publish movement commands
         self.cmd_vel_pub.publish(self.twist)
 
         # ••• display processed images •••
