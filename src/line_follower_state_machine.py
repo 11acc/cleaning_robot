@@ -136,18 +136,18 @@ class LineFollowerSM:
         # ---------------- Visualisation -----------------------------------
         if self.debug:
             # 1. Raw camera with overlays
-            vis = frame.copy()
-            cv2.rectangle(vis, (0, top_start), (w, top_end), (255, 0, 0), 2)
-            cv2.rectangle(vis, (0, bot_start), (w, bot_end), (0, 255, 0), 2)
-            cv2.putText(vis, self.state, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
-            cv2.imshow("camera", vis)
+            #vis = frame.copy()
+            #cv2.rectangle(vis, (0, top_start), (w, top_end), (255, 0, 0), 2)
+            #cv2.rectangle(vis, (0, bot_start), (w, bot_end), (0, 255, 0), 2)
+            #cv2.putText(vis, self.state, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
+            #v2.imshow("camera", vis)
 
             # 2. Binary mask (top + bottom ROIs)
             mask_full = np.zeros((h, w), dtype=np.uint8)
             mask_full[top_start:top_end, :] = top_mask
             mask_full[bot_start:bot_end, :] = bot_mask
-            cv2.imshow("mask", mask_full)
-            cv2.waitKey(1)
+            #cv2.imshow("mask", mask_full)
+            #cv2.waitKey(1)
 
     def run(self):
         rospy.spin()

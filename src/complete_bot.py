@@ -516,10 +516,10 @@ class CompleteBot:
                 self.cmd_vel_pub.publish(self.twist)
 
             # Visualization (optional)
-            cv2.circle(cv_image, (cX, cY), 5, (255, 255, 255), -1)
-            cv2.imshow("Camera View - Yellow Zone", cv_image)
-            cv2.imshow("Yellow Mask", mask)
-            cv2.waitKey(3)
+            #cv2.circle(cv_image, (cX, cY), 5, (255, 255, 255), -1)
+            #cv2.imshow("Camera View - Yellow Zone", cv_image)
+            #cv2.imshow("Yellow Mask", mask)
+            #cv2.waitKey(3)
 
             # Update flags back to self
             self.searching = searching

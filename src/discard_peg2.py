@@ -538,9 +538,9 @@ class PegGrabberDiscarder:
 
         # Display all the views
         #cv2.imshow("Camera View (Full Context)", full_context)
-        cv2.imshow("Processing View (Cropped)", cv_image)
+        #cv2.imshow("Processing View (Cropped)", cv_image)
         #cv2.imshow("Processed Mask", mask)
-        cv2.waitKey(3)
+        #cv2.waitKey(3)
 
 
 if __name__ == '__main__':
