@@ -36,10 +36,8 @@ enum State {
     FOLLOW_LINE,
     APPROACH_OBJECT,
     GRAB_OBJECT,
-    NAVIGATE_TO_YELLOW_ZONE,
-    NAVIGATE_OUTSIDE_CIRCUIT,
-    RELEASE_OBJECT,
-    
+    YELLOW_ZONE,
+    DISCARD_ZONE
 }
 
 enum ObjectType {
@@ -63,7 +61,7 @@ class CompleteBot:
         # Gripper
         self.servo_pub = rospy.Publisher('/servo', UInt16, queue_size=10)
         self.servo_load_pub = rospy.Publisher('/servoLoad', Float64, queue_size=10)
-        # Distance sensors for safety and for approaching pegs
+        # Distance sensors for safety
         self.fl_sensor_sub = rospy.Subscriber('/range/fl', Range, self.fl_sensor_callback)
         self.fr_sensor_sub = rospy.Subscriber('/range/fr', Range, self.fr_sensor_callback)
         
@@ -84,20 +82,17 @@ class CompleteBot:
             self.approach_object(msg)
         elif self.state == State.GRAB_OBJECT:
             self.grab_object(msg)
-        elif self.state == State.NAVIGATE_TO_YELLOW_ZONE:
-            self.navigate_to_yellow_zone(msg)
-        elif self.state == State.NAVIGATE_OUTSIDE_CIRCUIT:
-            self.navigate_outside_circuit(msg)
-        elif self.state == State.RELEASE_OBJECT:
-            self.release_object(msg)
-        elif self.state == State.FIND_LINE:
-            self.find_line(msg)
+        elif self.state == State.YELLOW_ZONE:
+            self.yellow_zone(msg)
+        elif self.state == State.DISCARD_ZONE:
+            self.discard_zone(msg)
     
     def fl_sensor_callback(self, msg):
         # if we are nbot approaching a peg and it's an obstacle
         if self.state != State.APPROACH_OBJECT:
             # if range is less than 0.15m, stop the robot and turn it left
             if msg.range < 0.15:
+                rospy.loginfo("Collision risk detected. Turning.")
                 self.collision_risk = True
                 self.speed.linear.x = 0
                 self.speed.angular.z = TURN_SPEED
@@ -114,6 +109,7 @@ class CompleteBot:
         if self.state != State.APPROACH_OBJECT:
             # if range is less than 0.15m, stop the robot and turn it left
             if msg.range < 0.15:
+                rospy.loginfo("Collision risk detected. Turning.")
                 self.collision_risk = True
                 self.speed.linear.x = 0
                 self.speed.angular.z = TURN_SPEED
@@ -126,6 +122,9 @@ class CompleteBot:
                 self.collision_risk = False
 
     def follow_line(self, msg):
+
+    def approach_object(self, msg):
+
 
     def grab_object(self, msg):
 
