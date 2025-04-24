@@ -72,7 +72,7 @@ class CompleteBot:
 
         self.collision_risk = False
 
-        self.state = State.FOLLOW_LINE
+        self.state = State.YELLOW_ZONE
 
         # Yellow zone related variables
         self.searching = True

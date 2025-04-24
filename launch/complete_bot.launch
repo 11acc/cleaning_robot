@@ -1,0 +1,4 @@
+<launch>
+    <node pkg="cleaning_robot" type="complete_bot.py" name="complete_bot" output="screen">
+    </node>
+</launch>
