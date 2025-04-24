@@ -1,4 +1,0 @@
-<launch>
-    <node pkg="cleaning_robot" type="botai.py" name="botai" output="screen">
-    </node>
-</launch>
