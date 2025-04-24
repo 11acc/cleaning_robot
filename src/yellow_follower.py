@@ -21,6 +21,7 @@ class YellowFollower:
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.servo_pub = rospy.Publisher('/servo', UInt16, queue_size=10)
         self.servo_load_pub = rospy.Publisher('/servoLoad', Float64, queue_size=10)
+        self.servo_load_sub = rospy.Subscriber('/servoLoad', Float64, self.servo_load_callback)
 
         self.twist = Twist()
 
@@ -63,14 +64,21 @@ class YellowFollower:
         self.check_gripper_state()#Checking the gripper State
 
     def check_gripper_state(self):
-        #Here we are checking the initial state of the gripper if it's closed.
-        #check the servoload here if it's closed then only execeute the code
-        if self.current_servo_load > 0.0:#or whatever value is to check if it's closed
-            self.gripper_closed = True #flag is true
-            rospy.loginfo("gripper is closed,Execuiting The Code...")
+        # Check servo load to determine gripper state
+        if abs(self.current_servo_load - 0.8) < 0.05:
+            self.gripper_closed = True
+            rospy.loginfo("Gripper is closed (peg held), executing code...")
+        elif abs(self.current_servo_load - 0.5) < 0.05:
+            self.gripper_closed = False
+            rospy.loginfo("Gripper is open (peg released), executing code without peg held...")
         else:
-            rospy.loginfo("Gripper is Opened, Please Close Gripper to Execute Code")
-            rospy.signal_shutdown("Gripper Not Closed")#Shutdown Node so the code doesn't execute.
+            # Servo load is neither 0.8 nor 0.5, no peg held but code should run
+            self.gripper_closed = False
+            rospy.loginfo("No peg held (servo load different from 0.8 or 0.5), executing code...")
+        
+    def servo_load_callback(self, msg):
+        self.current_servo_load = msg.data
+        self.check_gripper_state()
 
     def odom_callback(self, msg):
         position = msg.pose.pose.position
@@ -84,9 +92,7 @@ class YellowFollower:
 
     def image_callback(self, msg):
         try:
-            if not self.gripper_closed:#Check here if the gripper is closed
-                rospy.logwarn_throttle(10,"Gripper must be closed to begin.")
-                return
+            rospy.loginfo_throttle(30, f"Current servo load: {self.current_servo_load:.2f}, Gripper closed: {self.gripper_closed}")
 
             if self.completed:
                 self.twist.linear.x = 0
@@ -98,7 +104,7 @@ class YellowFollower:
                 self.return_to_start()
                 self.cmd_vel_pub.publish(self.twist)
                 return
-
+            
             if self.stopped_at_target and not self.returning:
                 self.twist.linear.x = 0
                 self.twist.angular.z = 0
