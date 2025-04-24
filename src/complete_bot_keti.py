@@ -237,14 +237,6 @@ class CompleteBot:
                     cv2.putText(display_image, f"Error X: {error_x}", (10, 150), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     
-                    # Calculate simple proportional control
-                    turn_p = 0.003  # Adjust this value based on testing
-                    turn_speed = -turn_p * error_x
-                    
-                    # Create a robot control visualization
-                    cv2.putText(display_image, f"Turn: {turn_speed:.2f}", (10, 180), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
                     # grab depth (distance) of the object
                     try:
                         if self.latest_depth_image is not None:
@@ -256,19 +248,6 @@ class CompleteBot:
                     except Exception as e:
                         rospy.logwarn("Could not get depth information: %s", str(e))
                         
-                    # Apply simple robot control based on visual feedback
-                    self.speed.angular.z = turn_speed
-                    self.speed.linear.x = 0.1  # Slow approach speed
-                    self.cmd_vel_pub.publish(self.speed)
-            else:
-                # If no object detected, show text on display
-                cv2.putText(display_image, "No object detected", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                            
-                # Stop the robot if no object detected
-                self.speed.angular.z = 0.0
-                self.speed.linear.x = 0.0
-                self.cmd_vel_pub.publish(self.speed)
             
             # Display the camera view with annotations
             cv2.imshow("Robot Vision", display_image)
