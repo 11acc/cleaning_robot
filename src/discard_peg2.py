@@ -78,7 +78,7 @@ class DiscardPegRoutine:
 
 if __name__ == '__main__':
     try:
-        routine = SimplePegRoutine()
+        routine = DiscardPegRoutine()
         routine.run()
     except rospy.ROSInterruptException:
         rospy.loginfo("ROS Interrupt - shutting down.")
