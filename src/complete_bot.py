@@ -208,9 +208,9 @@ class CompleteBot:
 
         # Actual routine steps
         turn(angular_speed=-0.5, duration=3.5)   # Turn right 90°
-        move(speed=0.1, duration=3.5)            # Move forward
+        move(speed=0.1, duration=3)            # Move forward
         open_gripper()                           # Drop object
-        move(speed=-0.1, duration=3.5)           # Move backward
+        move(speed=-0.1, duration=3)           # Move backward
         turn(angular_speed=0.5, duration=3.5)    # Turn left 90°
 
         rospy.loginfo("Discard routine complete")
