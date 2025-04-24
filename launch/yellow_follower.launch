@@ -1,4 +1,0 @@
-<launch>
-    <node pkg="cleaning_robot" type="yellow_follower.py" name="yellow_follower" output="screen">
-    </node>
-</launch>

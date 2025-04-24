@@ -1,4 +1,0 @@
-<launch>
-    <node pkg="cleaning_robot" type="red_peg_grabber.py" name="red_peg_grabber" output="screen">
-    </node>
-</launch>

@@ -112,8 +112,8 @@ class PegGrabberDiscarder:
         self.upper_green = np.array([85, 255, 155])
 
         # Movement parameters
-        self.turn_speed = 0.65             # Angular velocity for turning (rad/s)
-        self.turn_duration = 2.4           # Time to complete a 90-degree turn (seconds)
+        self.turn_speed = 0.65           # Angular velocity for turning (rad/s)
+        self.turn_duration = 2.4         # Time to complete a 90-degree turn (seconds)
         
         # ---------- State Tracking Variables ----------
         self.target_pose = None          # Target position for approach (x, y)
@@ -441,7 +441,7 @@ class PegGrabberDiscarder:
     def execute_turn_back(self):
         """
         Turns the robot back to its original orientation with improved parameters
-        to ensure a complete turn. Direction depends on which way we initially turned.
+        to ensure a complete turn. Direction depends on which way we initially turned
         """
         # Calculate elapsed time since turn started
         current_time = rospy.Time.now().to_sec()
@@ -496,7 +496,7 @@ class PegGrabberDiscarder:
         Helper method to reset all state variables for the next iteration
         """
         # Reset all state flags
-        self.approaching = True          # Begin approaching again
+        self.approaching = True
         self.grabbed_peg = False
         self.turning_to_discard = False
         self.discarding = False
@@ -595,10 +595,10 @@ class PegGrabberDiscarder:
             cv2.circle(full_context, (cX, cY + crop_height), 5, (255, 255, 255), -1)
 
         # Display all the views
-        #cv2.imshow("Camera View (Full Context)", full_context)
-        #cv2.imshow("Processing View (Cropped)", cv_image)
-        #cv2.imshow("Processed Mask", mask)
-        #cv2.waitKey(3)
+        cv2.imshow("Camera View (Full Context)", full_context)
+        cv2.imshow("Processing View (Cropped)", cv_image)
+        cv2.imshow("Processed Mask", mask)
+        cv2.waitKey(3)
 
 
 if __name__ == '__main__':
