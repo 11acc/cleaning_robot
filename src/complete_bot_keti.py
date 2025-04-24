@@ -21,11 +21,11 @@ RED_COLOR_UPPER_THRESHOLD2 = np.array([180, 255, 255])
 GREEN_COLOR_LOWER_THRESHOLD = np.array([0, 100, 100])
 GREEN_COLOR_UPPER_THRESHOLD = np.array([10, 255, 255])
 
-BLUE_COLOR_LOWER_THRESHOLD = np.array([100, 0, 0])
-BLUE_COLOR_UPPER_THRESHOLD = np.array([255, 10, 10])
+BLUE_COLOR_LOWER_THRESHOLD = np.array([180, 50, 50])
+BLUE_COLOR_UPPER_THRESHOLD = np.array([250, 255, 255])
 
-YELLOW_COLOR_LOWER_THRESHOLD = np.array([0, 200, 200])
-YELLOW_COLOR_UPPER_THRESHOLD = np.array([10, 255, 255])
+YELLOW_COLOR_LOWER_THRESHOLD = np.array([15, 60, 100])
+YELLOW_COLOR_UPPER_THRESHOLD = np.array([40, 255, 255])
 
 LINE_FOLLOW_SPEED = 0.1        # m/s
 TURN_SPEED = 0.1               # rad/s
@@ -168,29 +168,55 @@ class CompleteBot:
             # Convert cropped image to HSV color space for better color detection
             hsv_image = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2HSV)
             
+<<<<<<< HEAD
+=======
+            # Debug: Display HSV color ranges and values
+            hsv_center = hsv_image[hsv_image.shape[0]//2, hsv_image.shape[1]//2]
+            rospy.loginfo(f"Center HSV value: {hsv_center}")
+            
+>>>>>>> f8bca1547ef69dccf274dd1f09c9d782f9d85c0a
             # detect whether object in front is red, green or blue by counting how 
             # many pixels in the image are within each threshold
             red_pixels1 = cv2.inRange(hsv_image, RED_COLOR_LOWER_THRESHOLD1, RED_COLOR_UPPER_THRESHOLD1)
             red_pixels2 = cv2.inRange(hsv_image, RED_COLOR_LOWER_THRESHOLD2, RED_COLOR_UPPER_THRESHOLD2)
             green_pixels = cv2.inRange(hsv_image, GREEN_COLOR_LOWER_THRESHOLD, GREEN_COLOR_UPPER_THRESHOLD)
             blue_pixels = cv2.inRange(hsv_image, BLUE_COLOR_LOWER_THRESHOLD, BLUE_COLOR_UPPER_THRESHOLD)
+<<<<<<< HEAD
+=======
+            
+            # Count pixels of each color for debugging
+            red_count = np.sum(red_pixels1) + np.sum(red_pixels2)
+            green_count = np.sum(green_pixels)
+            blue_count = np.sum(blue_pixels)
+            
+            # Log the pixel counts
+            rospy.loginfo(f"Pixel counts - Red: {red_count}, Green: {green_count}, Blue: {blue_count}")
+            rospy.loginfo(f"Blue thresholds - Lower: {BLUE_COLOR_LOWER_THRESHOLD}, Upper: {BLUE_COLOR_UPPER_THRESHOLD}")
+>>>>>>> f8bca1547ef69dccf274dd1f09c9d782f9d85c0a
 
             # compare the number of pixels between the three and see which one is more major
-            if (np.sum(red_pixels1)+np.sum(red_pixels2)) > np.sum(green_pixels) and (np.sum(red_pixels1)+np.sum(red_pixels2)) > np.sum(blue_pixels):
+            if red_count > green_count and red_count > blue_count and red_count > 500:
                 self.object_type = ObjectType.RED
                 # Create combined red mask
                 color_mask = cv2.bitwise_or(red_pixels1, red_pixels2)
-            elif np.sum(green_pixels) > (np.sum(red_pixels1)+np.sum(red_pixels2)) and np.sum(green_pixels) > np.sum(blue_pixels):
+                rospy.loginfo("Detected RED object")
+            elif green_count > red_count and green_count > blue_count and green_count > 500:
                 self.object_type = ObjectType.GREEN
                 color_mask = green_pixels
-            elif np.sum(blue_pixels) > (np.sum(red_pixels1)+np.sum(red_pixels2)) and np.sum(blue_pixels) > np.sum(green_pixels):
+                rospy.loginfo("Detected GREEN object")
+            elif blue_count > red_count and blue_count > green_count and blue_count > 500:
                 self.object_type = ObjectType.BLUE
                 color_mask = blue_pixels
+                rospy.loginfo("Detected BLUE object")
             else:
                 self.object_type = ObjectType.UNKNOWN
                 color_mask = None
+                rospy.loginfo("Unknown object or insufficient pixels detected")
             
-            rospy.loginfo("Object type: %s", self.object_type)
+            # Show separate color masks for debugging
+            cv2.imshow("Red Mask", cv2.bitwise_or(red_pixels1, red_pixels2))
+            cv2.imshow("Blue Mask", blue_pixels)
+            cv2.imshow("Green Mask", green_pixels)
 
             # Apply morphology operations to clean up the mask
             if color_mask is not None:
@@ -198,8 +224,9 @@ class CompleteBot:
                 color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_OPEN, kernel)
                 color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
                 
-                # Display the mask
-                cv2.imshow("Color Mask", color_mask)
+                # Display the mask (resize for performance)
+                mask_display = cv2.resize(color_mask, (320, 240))
+                cv2.imshow("Color Mask", mask_display)
                 
                 # Find contours for the detected color
                 contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -210,6 +237,11 @@ class CompleteBot:
                     largest_contour = max(contours, key=cv2.contourArea)
                     contour_area = cv2.contourArea(largest_contour)
                     
+<<<<<<< HEAD
+=======
+                    rospy.loginfo(f"Largest contour area: {contour_area}")
+                    
+>>>>>>> f8bca1547ef69dccf274dd1f09c9d782f9d85c0a
                     # Only proceed if the contour is large enough (to avoid noise)
                     if contour_area > 100:  # Adjust this threshold as needed
                         # Get the bounding box for the largest contour
@@ -305,7 +337,11 @@ class CompleteBot:
                                 self.speed.linear.x = 0.05  # Slow forward speed
                             else:
                                 # Object is centered, move faster
+<<<<<<< HEAD
                                 self.speed.angular.z = turn_speed * 0.5  # Gentler turning
+=======
+                                self.speed.angular.z = turn_speed * 0.2  # Gentler turning
+>>>>>>> f8bca1547ef69dccf274dd1f09c9d782f9d85c0a
                                 self.speed.linear.x = 0.15  # Faster forward speed
                                 
                             self.cmd_vel_pub.publish(self.speed)
@@ -329,8 +365,9 @@ class CompleteBot:
                 self.speed.linear.x = 0.0
                 self.cmd_vel_pub.publish(self.speed)
             
-            # Display the camera view with annotations
-            cv2.imshow("Robot Vision", display_image)
+            # Display the camera view with annotations (resize for performance)
+            display_image_resized = cv2.resize(display_image, (480, 360))
+            cv2.imshow("Robot Vision", display_image_resized)
             cv2.waitKey(1)  # Wait 1ms to update display
 
         except CvBridgeError as e:
