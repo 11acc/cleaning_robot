@@ -4,7 +4,7 @@ import rospy
 from geometry_msgs.msg import Twist
 from std_msgs.msg import UInt16, Float64
 
-class SimplePegRoutine:
+class DiscardPegRoutine:
     def __init__(self):
         rospy.init_node('discard_peg_routine')
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
@@ -48,7 +48,7 @@ class SimplePegRoutine:
         rospy.loginfo("Starting discard peg routine")
 
         # 1. Turn right 90 degrees
-        self.turn(angular_speed=-0.5, duration=5)
+        self.turn(angular_speed=-0.5, duration=10)
 
         # 2. Move forward 30 cm
         self.move(speed=0.1, duration=5)
@@ -60,7 +60,7 @@ class SimplePegRoutine:
         self.move(speed=-0.1, duration=5)
 
         # 5. Turn left 90 degrees
-        self.turn(angular_speed=0.5, duration=5)
+        self.turn(angular_speed=0.5, duration=10)
 
         rospy.loginfo("Routine complete")
 
