@@ -9,7 +9,7 @@ Callback-Driven Execution:
     │   └── Updates current_pose with position and orientation
     │
     └── image_callback() - Main driver, triggered by camera frames
-        ├── Converts image and detects red pegs
+        ├── Converts image and detects pegs (red, blue, or green)
         └── Based on current state, calls one of these methods:
             │
             ├── If approaching: approach_target()
@@ -30,6 +30,10 @@ Callback-Driven Execution:
 
 State Transitions:
     approaching → grabbed_peg → turning_to_discard → discarding → turning_back → completed
+
+Special Behavior:
+    - Red/Blue pegs: Turn AWAY from deploy zone when discarding
+    - Green pegs: Turn TOWARD deploy zone when discarding
 
 Helper Methods:
     - stop_robot() - Stops all movement
@@ -69,12 +73,15 @@ class PegGrabberDiscarder:
         self.turning_back = False        # Turning back 90° to original orientation
         self.completed = False           # Task completed flag
         self.gripper_closed = False      # Flag for gripper state
+        self.detected_peg_color = None   # Track which color peg was detected and grabbed
 
         # ---------- Parameter Configuration ----------
         # Vision parameters
         self.min_contour_area = 500      # Minimum size for detecting peg in pixels
+        self.image_width = 640           # Full image width
+        self.image_height = 480          # Full image height
         self.center_x = 320              # Center of the camera image (horizontal)
-        self.center_y = 240              # Center of the camera image (vertical)
+        self.center_y = 120              # Center of the cropped image (vertical - adjusted for cropping)
         self.fov_horizontal = 60         # Camera's horizontal field of view in degrees
         self.focal_length_px = 554       # Camera focal length in pixels - used for distance calculation
 
@@ -85,7 +92,7 @@ class PegGrabberDiscarder:
         # Side of the track where the deploy zone is located
         self.deploy_zone_position = 'left'
         
-        # HSV color thresholds for detecting red pegs // to be changed probably received from global script
+        # HSV color thresholds for detecting red pegs
         self.lower_red1 = np.array([0, 70, 50])
         self.upper_red1 = np.array([10, 255, 255])
         self.lower_red2 = np.array([170, 70, 50])
@@ -95,9 +102,9 @@ class PegGrabberDiscarder:
         self.lower_blue = np.array([90, 50, 50])
         self.upper_blue = np.array([130, 255, 155])
 
-        # HSV color thresholds for detecting green
-        self.lower_blue = np.array([35, 45, 40])
-        self.upper_blue = np.array([85, 255, 155])
+        # HSV color thresholds for detecting green pegs
+        self.lower_green = np.array([35, 45, 40])
+        self.upper_green = np.array([85, 255, 155])
 
         # Movement parameters
         self.turn_speed = 0.65             # Angular velocity for turning (rad/s)
@@ -157,6 +164,7 @@ class PegGrabberDiscarder:
         """
         Analyses camera images to detect pegs and drives the robot's state machine
         Called automatically when new camera frames arrive
+        Only processes the bottom 50% of the image to reduce noise
         """
         try:
             # Skip processing if task is completed
@@ -164,8 +172,17 @@ class PegGrabberDiscarder:
                 self.stop_robot()
                 return
 
-            # Convert ROS image to OpenCV format and process
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            # Convert ROS image to OpenCV format
+            full_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            
+            # Get image dimensions
+            height, width = full_image.shape[:2]
+            
+            # Crop to bottom 50% of the image
+            crop_height = height // 2
+            cv_image = full_image[crop_height:height, 0:width]
+            
+            # Process the cropped image
             hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
             # Create mask for red color (handles HSV color space wraparound for red)
@@ -175,9 +192,12 @@ class PegGrabberDiscarder:
 
             # Create mask for blue color
             mask_blue = cv2.inRange(hsv, self.lower_blue, self.upper_blue)
+            
+            # Create mask for green color
+            mask_green = cv2.inRange(hsv, self.lower_green, self.upper_green)
 
             # Combine masks for overall detection
-            combined_mask = cv2.bitwise_or(mask_red, mask_blue)
+            combined_mask = cv2.bitwise_or(cv2.bitwise_or(mask_red, mask_blue), mask_green)
 
             # Clean up the combined mask with erosion and dilation
             processed_mask = cv2.erode(combined_mask, None, iterations=2)
@@ -186,12 +206,9 @@ class PegGrabberDiscarder:
             # Find contours in the mask (potential peg objects)
             contours, _ = cv2.findContours(processed_mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            # Determine which color is detected
-            detected_color = None
-            
             # Get centroid of the largest contour (if any)
             cX, cY = self.center_x, self.center_y  # Default to center
-            if contours:
+            if contours and self.approaching:  # Only process colors during approach phase
                 largest_contour = max(contours, key=cv2.contourArea)
                 contour_area = cv2.contourArea(largest_contour)
                 
@@ -206,18 +223,25 @@ class PegGrabberDiscarder:
                         contour_mask = np.zeros_like(processed_mask)
                         cv2.drawContours(contour_mask, [largest_contour], -1, 255, -1)
                         
-                        # Check if contour is more in red mask or blue mask
+                        # Check which color is most prevalent in the contour
                         red_pixels = cv2.bitwise_and(mask_red, contour_mask)
                         blue_pixels = cv2.bitwise_and(mask_blue, contour_mask)
+                        green_pixels = cv2.bitwise_and(mask_green, contour_mask)
+                        
                         red_count = cv2.countNonZero(red_pixels)
                         blue_count = cv2.countNonZero(blue_pixels)
+                        green_count = cv2.countNonZero(green_pixels)
                         
-                        if red_count > blue_count:
-                            detected_color = "red"
+                        # Determine color based on highest pixel count
+                        if red_count > blue_count and red_count > green_count:
+                            self.detected_peg_color = "red"
                             rospy.loginfo_throttle(1, "Red peg detected")
-                        else:
-                            detected_color = "blue"
+                        elif blue_count > red_count and blue_count > green_count:
+                            self.detected_peg_color = "blue"
                             rospy.loginfo_throttle(1, "Blue peg detected")
+                        elif green_count > red_count and green_count > blue_count:
+                            self.detected_peg_color = "green"
+                            rospy.loginfo_throttle(1, "Green peg detected")
 
                         # Estimate target distance using contour width
                         x, y, w, h = cv2.boundingRect(largest_contour)
@@ -234,7 +258,7 @@ class PegGrabberDiscarder:
                                     target_x = x_cur + distance * math.cos(yaw_cur)
                                     target_y = y_cur + distance * math.sin(yaw_cur)
                                     self.target_pose = (target_x, target_y)
-                                    rospy.loginfo(f"Target set to x={target_x:.2f}, y={target_y:.2f}, color={detected_color}")
+                                    rospy.loginfo(f"Target set to x={target_x:.2f}, y={target_y:.2f}, color={self.detected_peg_color}")
 
             # ---------- State Machine Execution ----------
             # Execute actions based on current state
@@ -245,7 +269,7 @@ class PegGrabberDiscarder:
                 # Initiate turn
                 self.turning_to_discard = True
                 self.turn_start_time = rospy.Time.now().to_sec()
-                rospy.loginfo("Beginning turn to discard")
+                rospy.loginfo(f"Beginning turn to discard {self.detected_peg_color} peg")
                 self.execute_turn_to_discard()
             elif self.turning_to_discard:
                 self.execute_turn_to_discard()
@@ -324,15 +348,22 @@ class PegGrabberDiscarder:
 
     def execute_turn_to_discard(self):
         """
-        Turns the robot 90 degrees away from the deploy zone
+        Turns the robot 90 degrees - direction depends on peg color
+        - For red/blue pegs: Turn AWAY from deploy zone
+        - For green pegs: Turn TOWARD deploy zone
         Uses timing to determine when turn is complete
         """
         # Calculate elapsed time since turn started
         current_time = rospy.Time.now().to_sec()
         if current_time - self.turn_start_time < self.turn_duration:
-            # Turn direction depends on deploy zone position
-            # Positive = counterclockwise, Negative = clockwise
-            turn_direction = 1.0 if self.deploy_zone_position == 'left' else -1.0
+            # Determine turn direction based on peg color and deploy zone position
+            if self.detected_peg_color == "green":
+                # For green pegs: Turn TOWARD deploy zone (opposite of normal behavior)
+                turn_direction = -1.0 if self.deploy_zone_position == 'left' else 1.0
+            else:
+                # For red/blue pegs: Turn AWAY from deploy zone (normal behavior)
+                turn_direction = 1.0 if self.deploy_zone_position == 'left' else -1.0
+            
             self.twist.linear.x = 0.0
             self.twist.angular.z = self.turn_speed * turn_direction
             self.cmd_vel_pub.publish(self.twist)
@@ -406,7 +437,7 @@ class PegGrabberDiscarder:
     def execute_turn_back(self):
         """
         Turns the robot back to its original orientation with improved parameters
-        to ensure a complete turn
+        to ensure a complete turn. Direction depends on which way we initially turned.
         """
         # Calculate elapsed time since turn started
         current_time = rospy.Time.now().to_sec()
@@ -416,8 +447,13 @@ class PegGrabberDiscarder:
         extended_turn_duration = self.turn_duration * 1.25
 
         if current_time - self.turn_start_time < extended_turn_duration:
-            # Turn in opposite direction of the first turn
-            turn_direction = -1.0 if self.deploy_zone_position == 'left' else 1.0
+            # Turn in opposite direction based on peg color and deploy zone
+            if self.detected_peg_color == "green":
+                # For green pegs: Turn opposite of the towards-deploy-zone direction
+                turn_direction = 1.0 if self.deploy_zone_position == 'left' else -1.0
+            else:
+                # For red/blue pegs: Turn opposite of the away-from-deploy-zone direction
+                turn_direction = -1.0 if self.deploy_zone_position == 'left' else 1.0
 
             # Use the same turn speed for consistency
             self.twist.linear.x = 0.0
@@ -428,7 +464,7 @@ class PegGrabberDiscarder:
             self.stop_robot()
             self.turning_back = False
             self.completed = True
-            rospy.loginfo("Turn back completed, task finished")
+            rospy.loginfo(f"Turn back completed, {self.detected_peg_color} peg task finished")
 
 
     # ---------- Helper Methods -------------------------------------------------------------------
@@ -439,11 +475,21 @@ class PegGrabberDiscarder:
         self.twist.linear.x = 0.0
         self.twist.angular.z = 0.0
         self.cmd_vel_pub.publish(self.twist)
+
     def visualize(self, cv_image, mask, cX, cY):
         """
         Creates visualization windows showing the camera view and mask
         Displays current state and gripper status on the image
+        Shows both the cropped view (processing) and the full image (context)
         """
+        # Create a blank full-size image to show the context of where we're looking
+        full_context = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
+        # Place the cropped image in the bottom half
+        crop_height = self.image_height // 2
+        full_context[crop_height:, :] = cv_image
+        # Draw a line showing the crop boundary
+        cv2.line(full_context, (0, crop_height), (self.image_width, crop_height), (0, 255, 255), 2)
+        
         # Determine status text based on current state
         status = "Unknown"
         if self.approaching:
@@ -459,23 +505,42 @@ class PegGrabberDiscarder:
         elif self.completed:
             status = "Task Completed"
 
-        # Draw status text on image
+        # Draw status text on images
         cv2.putText(cv_image, status, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(full_context, status, (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        # Draw gripper state on image
+        # Draw gripper state on images
         gripper_status = "Gripper: Closed" if self.gripper_closed else "Gripper: Open"
         cv2.putText(cv_image, gripper_status, (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(full_context, gripper_status, (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # Draw detected peg color
+        if self.detected_peg_color:
+            color_text = f"Peg Color: {self.detected_peg_color}"
+            cv2.putText(cv_image, color_text, (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(full_context, color_text, (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        # Display centroid of detected peg
+        # Display "CROPPED VIEW - PROCESSING AREA" text 
+        cv2.putText(full_context, "CROPPED VIEW - PROCESSING AREA", (10, crop_height + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # Display centroid of detected peg (in the cropped image coordinates)
         cv2.circle(cv_image, (cX, cY), 5, (255, 255, 255), -1)
+        # Also display in full context (need to adjust Y coordinate)
+        if cY >= 0 and cX >= 0:  # Only if valid centroid
+            cv2.circle(full_context, (cX, cY + crop_height), 5, (255, 255, 255), -1)
 
-        # Display the camera view and the processed mask
-        cv2.imshow("Camera View", cv_image)
-        cv2.imshow("Processed Mask", mask)
+        # Display all the views
+        #cv2.imshow("Camera View (Full Context)", full_context)
+        cv2.imshow("Processing View (Cropped)", cv_image)
+        #cv2.imshow("Processed Mask", mask)
         cv2.waitKey(3)
-
 
 
 if __name__ == '__main__':
