@@ -1,1 +1,4 @@
-
+<launch>
+    <node pkg="cleaning_robot" type="complete_bot_keti.py" name="complete_bot_keti" output="screen">
+    </node>
+</launch>
