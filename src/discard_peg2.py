@@ -22,19 +22,31 @@ class SimplePegRoutine:
     def turn(self, angular_speed, duration):
         direction = "right" if angular_speed < 0 else "left"
         rospy.loginfo(f"Turning {direction} with speed {angular_speed} for {duration} seconds")
+
         twist = Twist()
         twist.angular.z = angular_speed
-        self.cmd_vel_pub.publish(twist)
-        rospy.sleep(duration)
+        rate = rospy.Rate(10)  # 10 Hz
+
+        start_time = rospy.Time.now()
+        while (rospy.Time.now() - start_time).to_sec() < duration:
+            self.cmd_vel_pub.publish(twist)
+            rate.sleep()
+
         self.stop()
 
     def move(self, speed, duration):
         direction = "forward" if speed > 0 else "backward"
         rospy.loginfo(f"Moving {direction} at speed {speed} for {duration} seconds")
+
         twist = Twist()
         twist.linear.x = speed
-        self.cmd_vel_pub.publish(twist)
-        rospy.sleep(duration)
+        rate = rospy.Rate(10)  # 10 Hz
+
+        start_time = rospy.Time.now()
+        while (rospy.Time.now() - start_time).to_sec() < duration:
+            self.cmd_vel_pub.publish(twist)
+            rate.sleep()
+
         self.stop()
 
     def open_gripper(self):
@@ -48,7 +60,7 @@ class SimplePegRoutine:
         rospy.loginfo("Starting discard peg routine")
 
         # 1. Turn right 90 degrees
-        self.turn(angular_speed=-0.5, duration=5)
+        self.turn(angular_speed=-0.5, duration=10)
 
         # 2. Move forward 30 cm
         self.move(speed=0.1, duration=5)
@@ -60,7 +72,7 @@ class SimplePegRoutine:
         self.move(speed=-0.1, duration=5)
 
         # 5. Turn left 90 degrees
-        self.turn(angular_speed=0.5, duration=5)
+        self.turn(angular_speed=0.5, duration=10)
 
         rospy.loginfo("Routine complete")
 
