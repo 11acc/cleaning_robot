@@ -1,0 +1,4 @@
+<launch>
+    <node pkg="cleaning_robot" type="discard_peg.py" name="discard_peg" output="screen">
+    </node>
+</launch>
