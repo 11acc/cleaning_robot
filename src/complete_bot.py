@@ -155,7 +155,6 @@ class CompleteBot:
             self.start_pose = self.current_pose
             rospy.loginfo(f"Recorded start pose: x={position.x:.2f}, y={position.y:.2f}, yaw={yaw:.2f}")
 
-    # Placeholder methods for other states
     def follow_line(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -173,6 +172,50 @@ class CompleteBot:
 
         top_mask = cv2.inRange(hsv[top_start:top_end, :], lower_black, upper_black)
         bot_mask = cv2.inRange(hsv[bot_start:bot_end, :], lower_black, upper_black)
+
+        # NEW CODE: Detect colored objects
+        # Define a region of interest for object detection (middle section of the image)
+        object_roi_start = int(h * 0.3)  # Top 30% of the image
+        object_roi_end = int(h * 0.7)    # Bottom 70% of the image
+        
+        # Create masks for each color
+        red_mask1 = cv2.inRange(hsv[object_roi_start:object_roi_end, :], RED_COLOR_LOWER_THRESHOLD1, RED_COLOR_UPPER_THRESHOLD1)
+        red_mask2 = cv2.inRange(hsv[object_roi_start:object_roi_end, :], RED_COLOR_LOWER_THRESHOLD2, RED_COLOR_UPPER_THRESHOLD2)
+        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+        
+        green_mask = cv2.inRange(hsv[object_roi_start:object_roi_end, :], GREEN_COLOR_LOWER_THRESHOLD, GREEN_COLOR_UPPER_THRESHOLD)
+        blue_mask = cv2.inRange(hsv[object_roi_start:object_roi_end, :], BLUE_COLOR_LOWER_THRESHOLD, BLUE_COLOR_UPPER_THRESHOLD)
+        
+        # Count pixels of each color
+        red_pixels = cv2.countNonZero(red_mask)
+        green_pixels = cv2.countNonZero(green_mask)
+        blue_pixels = cv2.countNonZero(blue_mask)
+        
+        # Define thresholds for detection
+        color_threshold = 100  # Minimum number of colored pixels to trigger approach
+        
+        # Check if any color exceeds the threshold
+        if red_pixels > color_threshold:
+            rospy.loginfo(f"Red object detected ({red_pixels} pixels). Switching to APPROACH_OBJECT state.")
+            self.object_type = ObjectType.RED
+            self.state = State.APPROACH_OBJECT
+            return
+        elif green_pixels > color_threshold:
+            rospy.loginfo(f"Green object detected ({green_pixels} pixels). Switching to APPROACH_OBJECT state.")
+            self.object_type = ObjectType.GREEN
+            self.state = State.APPROACH_OBJECT
+            return
+        elif blue_pixels > color_threshold:
+            rospy.loginfo(f"Blue object detected ({blue_pixels} pixels). Switching to APPROACH_OBJECT state.")
+            self.object_type = ObjectType.BLUE
+            self.state = State.APPROACH_OBJECT
+            return
+        
+         # Continue with regular line following if no object detected
+        # State machine logic (existing line following code)
+        if not hasattr(self, 'line_state'):
+            self.line_state = "FOLLOW"
+            self.turn_direction = "LEFT"
 
         bar_px_thresh = 2000
         line_px_thresh = 1000
