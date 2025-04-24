@@ -169,8 +169,51 @@ class CompleteBot:
         # TODO: Implement grabbing
 
     def discard_zone(self, msg):
-        rospy.loginfo("Discarding object... (not implemented)")
-        # TODO: Implement discard zone
+        rospy.loginfo("Executing discard zone routine")
+
+        def stop():
+            twist = Twist()
+            self.cmd_vel_pub.publish(twist)
+            rospy.sleep(0.5)
+
+        def turn(angular_speed, duration):
+            direction = "right" if angular_speed < 0 else "left"
+            rospy.loginfo(f"Turning {direction} with speed {angular_speed} for {duration} seconds")
+            twist = Twist()
+            twist.angular.z = angular_speed
+            rate = rospy.Rate(10)
+            start_time = rospy.Time.now()
+            while (rospy.Time.now() - start_time).to_sec() < duration:
+                self.cmd_vel_pub.publish(twist)
+                rate.sleep()
+            stop()
+
+        def move(speed, duration):
+            direction = "forward" if speed > 0 else "backward"
+            rospy.loginfo(f"Moving {direction} at speed {speed} for {duration} seconds")
+            twist = Twist()
+            twist.linear.x = speed
+            rate = rospy.Rate(10)
+            start_time = rospy.Time.now()
+            while (rospy.Time.now() - start_time).to_sec() < duration:
+                self.cmd_vel_pub.publish(twist)
+                rate.sleep()
+            stop()
+
+        def open_gripper():
+            rospy.loginfo("Opening gripper")
+            self.servo_pub.publish(UInt16(data=0))
+            self.servo_load_pub.publish(Float64(data=0.5))
+            rospy.sleep(1.5)
+
+        # Actual routine steps
+        turn(angular_speed=-0.5, duration=4)   # Turn right 90°
+        move(speed=0.1, duration=3.5)            # Move forward
+        open_gripper()                           # Drop object
+        move(speed=-0.1, duration=3.5)           # Move backward
+        turn(angular_speed=0.5, duration=4)    # Turn left 90°
+
+        rospy.loginfo("Discard routine complete")
 
     def yellow_zone(self, msg):
         # Nested helper functions inside yellow_zone (nonlocal used where needed)
