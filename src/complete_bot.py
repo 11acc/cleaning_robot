@@ -157,8 +157,81 @@ class CompleteBot:
 
     # Placeholder methods for other states
     def follow_line(self, msg):
-        rospy.loginfo("Following line... (not implemented)")
-        # TODO: Implement line following
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        except Exception as e:
+            rospy.logerr("CV Bridge Error: %s", e)
+            return
+
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        h, w, _ = hsv.shape
+
+        lower_black = np.array([0, 0, 0])
+        upper_black = np.array([180, 255, 60])
+        top_start, top_end = int(h * self.top_roi[0]), int(h * self.top_roi[1])
+        bot_start, bot_end = int(h * self.bot_roi[0]), int(h * self.bot_roi[1])
+
+        top_mask = cv2.inRange(hsv[top_start:top_end, :], lower_black, upper_black)
+        bot_mask = cv2.inRange(hsv[bot_start:bot_end, :], lower_black, upper_black)
+
+        bar_px_thresh = 2000
+        line_px_thresh = 1000
+        has_bar = cv2.countNonZero(top_mask) > bar_px_thresh
+        has_line = cv2.countNonZero(bot_mask) > line_px_thresh
+
+        # State machine logic
+        if not hasattr(self, 'line_state'):
+            self.line_state = "FOLLOW"
+            self.turn_direction = "LEFT"
+
+        if self.line_state == "FOLLOW":
+            if has_bar:
+                self.line_state = "PREPARE"
+                rospy.loginfo_once("FOLLOW → PREPARE")
+            self.follow_centre_line(bot_mask, w)
+
+        elif self.line_state == "PREPARE":
+            self.follow_centre_line(bot_mask, w)
+            if not has_line:
+                self.turn_direction = "RIGHT" if cv2.countNonZero(top_mask[:, w // 2:]) > cv2.countNonZero(top_mask[:, :w // 2]) else "LEFT"
+                self.line_state = "TURN"
+                rospy.loginfo_once(f"PREPARE → TURN ({self.turn_direction})")
+
+        elif self.line_state == "TURN":
+            cx = self.centroid_x(bot_mask) if has_line else None
+            if cx is not None:
+                error = cx - w // 2
+                turn_speed = 0.35
+                kp_turn = 1.0 / 200.0
+                center_tol = 100
+                self.twist.angular.z = (turn_speed if self.turn_direction == "LEFT" else -turn_speed) - kp_turn * float(error)
+                self.twist.linear.x = 0.0
+                if abs(error) < center_tol:
+                    self.line_state = "FOLLOW"
+                    rospy.loginfo_once("TURN → FOLLOW (centred)")
+            else:
+                self.twist.angular.z = 0.35 if self.turn_direction == "LEFT" else -0.35
+                self.twist.linear.x = 0.0
+
+        self.cmd_vel_pub.publish(self.twist)
+
+    def follow_centre_line(self, line_mask, width):
+        cx = self.centroid_x(line_mask)
+        if cx is None:
+            self.twist.linear.x = 0.02
+            self.twist.angular.z = 0.0
+        else:
+            error = cx - width // 2
+            kp = 1.0 / 450.0
+            self.twist.linear.x = LINE_FOLLOW_SPEED
+            self.twist.angular.z = -kp * float(error)
+
+    def centroid_x(self, mask):
+        M = cv2.moments(mask)
+        if M["m00"] == 0:
+            return None
+        return int(M["m10"] / M["m00"])
+
 
     def approach_object(self, msg):
         rospy.loginfo("Approaching object... (not implemented)")
