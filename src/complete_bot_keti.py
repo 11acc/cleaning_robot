@@ -157,12 +157,15 @@ class CompleteBot:
             # Create a copy of the original image for display
             display_image = self.current_image.copy()
             
+            # Convert image to HSV color space for better color detection
+            hsv_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2HSV)
+            
             # detect whether object in front is red, green or blue by counting how 
-            # many pixels in the iomage are within each threshold
-            red_pixels1 = cv2.inRange(self.current_image, RED_COLOR_LOWER_THRESHOLD1, RED_COLOR_UPPER_THRESHOLD1)
-            red_pixels2 = cv2.inRange(self.current_image, RED_COLOR_LOWER_THRESHOLD2, RED_COLOR_UPPER_THRESHOLD2)
-            green_pixels = cv2.inRange(self.current_image, GREEN_COLOR_LOWER_THRESHOLD, GREEN_COLOR_UPPER_THRESHOLD)
-            blue_pixels = cv2.inRange(self.current_image, BLUE_COLOR_LOWER_THRESHOLD, BLUE_COLOR_UPPER_THRESHOLD)
+            # many pixels in the image are within each threshold
+            red_pixels1 = cv2.inRange(hsv_image, RED_COLOR_LOWER_THRESHOLD1, RED_COLOR_UPPER_THRESHOLD1)
+            red_pixels2 = cv2.inRange(hsv_image, RED_COLOR_LOWER_THRESHOLD2, RED_COLOR_UPPER_THRESHOLD2)
+            green_pixels = cv2.inRange(hsv_image, GREEN_COLOR_LOWER_THRESHOLD, GREEN_COLOR_UPPER_THRESHOLD)
+            blue_pixels = cv2.inRange(hsv_image, BLUE_COLOR_LOWER_THRESHOLD, BLUE_COLOR_UPPER_THRESHOLD)
 
             # compare the number of pixels between the three and see which one is more major
             if (np.sum(red_pixels1)+np.sum(red_pixels2)) > np.sum(green_pixels) and (np.sum(red_pixels1)+np.sum(red_pixels2)) > np.sum(blue_pixels):
@@ -217,15 +220,55 @@ class CompleteBot:
                     cv2.putText(display_image, f"Size: {w}x{h}", (10, 60), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     
+                    # Centered text showing pixel count
+                    total_pixels = np.sum(color_mask > 0)
+                    cv2.putText(display_image, f"Pixels: {total_pixels}", (10, 120), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    
+                    # Center of image crosshair
+                    img_center_x = display_image.shape[1] // 2
+                    img_center_y = display_image.shape[0] // 2
+                    cv2.line(display_image, (img_center_x - 20, img_center_y), (img_center_x + 20, img_center_y), (255, 0, 0), 2)
+                    cv2.line(display_image, (img_center_x, img_center_y - 20), (img_center_x, img_center_y + 20), (255, 0, 0), 2)
+                    
+                    # Calculate error from center 
+                    error_x = center_x - img_center_x
+                    error_y = center_y - img_center_y
+                    cv2.putText(display_image, f"Error X: {error_x}", (10, 150), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    
+                    # Calculate simple proportional control
+                    turn_p = 0.003  # Adjust this value based on testing
+                    turn_speed = -turn_p * error_x
+                    
+                    # Create a robot control visualization
+                    cv2.putText(display_image, f"Turn: {turn_speed:.2f}", (10, 180), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    
                     # grab depth (distance) of the object
                     try:
-                        depth_image = self.bridge.imgmsg_to_cv2(self.latest_depth_image, desired_encoding='passthrough')
-                        depth = depth_image[center_y, center_x]
-                        rospy.loginfo("Depth: %f", depth)
-                        cv2.putText(display_image, f"Depth: {depth:.2f}m", (10, 90), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    except:
-                        rospy.logwarn("Could not get depth information")
+                        if self.latest_depth_image is not None:
+                            depth_image = self.bridge.imgmsg_to_cv2(self.latest_depth_image, desired_encoding='passthrough')
+                            depth = depth_image[center_y, center_x]
+                            rospy.loginfo("Depth: %f", depth)
+                            cv2.putText(display_image, f"Depth: {depth:.2f}m", (10, 90), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    except Exception as e:
+                        rospy.logwarn("Could not get depth information: %s", str(e))
+                        
+                    # Apply simple robot control based on visual feedback
+                    self.speed.angular.z = turn_speed
+                    self.speed.linear.x = 0.1  # Slow approach speed
+                    self.cmd_vel_pub.publish(self.speed)
+            else:
+                # If no object detected, show text on display
+                cv2.putText(display_image, "No object detected", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                            
+                # Stop the robot if no object detected
+                self.speed.angular.z = 0.0
+                self.speed.linear.x = 0.0
+                self.cmd_vel_pub.publish(self.speed)
             
             # Display the camera view with annotations
             cv2.imshow("Robot Vision", display_image)
@@ -233,6 +276,10 @@ class CompleteBot:
 
         except CvBridgeError as e:
             rospy.logerr(e)
+            # Safety - stop the robot
+            self.speed.angular.z = 0.0
+            self.speed.linear.x = 0.0
+            self.cmd_vel_pub.publish(self.speed)
     # grab the object goes here.
     def grab_object(self, msg):
         pass
@@ -251,7 +298,4 @@ if __name__ == "__main__":
         pass
     finally:
         cv2.destroyAllWindows()
-        
-        
-        
         
