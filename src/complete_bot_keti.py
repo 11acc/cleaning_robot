@@ -32,20 +32,20 @@ TURN_SPEED = 0.1               # rad/s
 GRIPPER_CLOSE_POSITION = 170   # Gripper closed position
 GRIPPER_OPEN_POSITION = 0    # Gripper open position
 
-enum State {
-    FOLLOW_LINE,
-    APPROACH_OBJECT,
-    GRAB_OBJECT,
-    YELLOW_ZONE,
-    DISCARD_ZONE
-}
+class State(enum.Enum) :
+    FOLLOW_LINE = 1,
+    APPROACH_OBJECT = 2,
+    GRAB_OBJECT = 3,
+    YELLOW_ZONE = 4,
+    DISCARD_ZONE = 5
 
-enum ObjectType {
-    RED,
-    GREEN,
-    BLUE,
-    UNKNOWN
-}
+
+class ObjectType(enum.Enum) :
+    RED = 1,
+    GREEN = 2,
+    BLUE = 3,
+    UNKNOWN = 4
+
 
 color_to_zone = {
     ObjectType.RED: "yellow zone",
@@ -60,7 +60,7 @@ class CompleteBot:
         rospy.init_node('complete_bot', anonymous=True)
 
         self.bridge = CvBridge()
-        self.twist = Twist()
+        self.speed = Twist()
 
         self.image_sub = rospy.Subscriber("/camera/color/image_raw", Image, self.image_callback)
         self.cmd_vel_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
@@ -75,6 +75,7 @@ class CompleteBot:
 
         # depth sensor
         self.depth_sub = rospy.Subscriber('/camera/depth/image_raw', Image, self.depth_callback, queue_size=1)
+        self.latest_depth_image = None
         
         self.gripper_position = 170
         self.rate = rospy.Rate(10)
@@ -85,11 +86,14 @@ class CompleteBot:
         self.collision_risk = False
 
         self.state = State.APPROACH_OBJECT
+        self.object_type = ObjectType.UNKNOWN
 
     def image_callback(self, msg):
+        rospy.loginfo(self.state)
         if self.state == State.FOLLOW_LINE:
             self.follow_line(msg)
         elif self.state == State.APPROACH_OBJECT:
+            rospy.loginfo("Approaching")
             self.approach_object(msg)
         elif self.state == State.GRAB_OBJECT:
             self.grab_object(msg)
@@ -130,7 +134,7 @@ class CompleteBot:
                 self.speed.angular.z = 0
                 self.cmd_vel_pub.publish(self.speed)
             else:
-                self.collision_risk = False`
+                self.collision_risk = False
     
     def depth_callback(self, msg):
         self.latest_depth_image = msg
@@ -231,11 +235,22 @@ class CompleteBot:
             rospy.logerr(e)
     # grab the object goes here.
     def grab_object(self, msg):
+        pass
 
     def yellow_zone(self, msg):
+        pass
 
     def discard_zone(self, msg):
+        pass
 
+if __name__ == "__main__":
+    try:
+        CompleteBot()
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass
+    finally:
+        cv2.destroyAllWindows()
         
         
         
