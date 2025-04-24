@@ -157,8 +157,16 @@ class CompleteBot:
             # Create a copy of the original image for display
             display_image = self.current_image.copy()
             
-            # Convert image to HSV color space for better color detection
-            hsv_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2HSV)
+            # Crop the bottom 50% of the image for better detection
+            height, width, _ = self.current_image.shape
+            crop_start_y = int(height * 0.5)  # Take only the bottom 50%
+            cropped_image = self.current_image[crop_start_y:, :]
+            
+            # Draw a line showing the crop boundary
+            cv2.line(display_image, (0, crop_start_y), (width, crop_start_y), (255, 0, 0), 2)
+            
+            # Convert cropped image to HSV color space for better color detection
+            hsv_image = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2HSV)
             
             # detect whether object in front is red, green or blue by counting how 
             # many pixels in the image are within each threshold
@@ -197,57 +205,129 @@ class CompleteBot:
                 contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
                 # If contours found, proceed with object approach
-                if contours:
+                if contours and len(contours) > 0:
                     # Find the largest contour
                     largest_contour = max(contours, key=cv2.contourArea)
+                    contour_area = cv2.contourArea(largest_contour)
                     
-                    # Get the bounding box for the largest contour
-                    x, y, w, h = cv2.boundingRect(largest_contour)
-                    
-                    # Draw rectangle around the detected object
-                    cv2.rectangle(display_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                    
-                    # Calculate center of the contour
-                    center_x = x + w//2
-                    center_y = y + h//2
-                    
-                    # Draw center point
-                    cv2.circle(display_image, (center_x, center_y), 5, (0, 0, 255), -1)
-                    
-                    # Add text labels
-                    cv2.putText(display_image, f"Object: {self.object_type}", (10, 30), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(display_image, f"Size: {w}x{h}", (10, 60), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    # Centered text showing pixel count
-                    total_pixels = np.sum(color_mask > 0)
-                    cv2.putText(display_image, f"Pixels: {total_pixels}", (10, 120), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    # Center of image crosshair
-                    img_center_x = display_image.shape[1] // 2
-                    img_center_y = display_image.shape[0] // 2
-                    cv2.line(display_image, (img_center_x - 20, img_center_y), (img_center_x + 20, img_center_y), (255, 0, 0), 2)
-                    cv2.line(display_image, (img_center_x, img_center_y - 20), (img_center_x, img_center_y + 20), (255, 0, 0), 2)
-                    
-                    # Calculate error from center 
-                    error_x = center_x - img_center_x
-                    error_y = center_y - img_center_y
-                    cv2.putText(display_image, f"Error X: {error_x}", (10, 150), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    # grab depth (distance) of the object
-                    try:
-                        if self.latest_depth_image is not None:
-                            depth_image = self.bridge.imgmsg_to_cv2(self.latest_depth_image, desired_encoding='passthrough')
-                            depth = depth_image[center_y, center_x]
-                            rospy.loginfo("Depth: %f", depth)
-                            cv2.putText(display_image, f"Depth: {depth:.2f}m", (10, 90), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    except Exception as e:
-                        rospy.logwarn("Could not get depth information: %s", str(e))
+                    # Only proceed if the contour is large enough (to avoid noise)
+                    if contour_area > 100:  # Adjust this threshold as needed
+                        # Get the bounding box for the largest contour
+                        x, y, w, h = cv2.boundingRect(largest_contour)
                         
+                        # Adjust y coordinate to account for cropping
+                        y_display = y + crop_start_y
+                        
+                        # Draw rectangle around the detected object
+                        cv2.rectangle(display_image, (x, y_display), (x + w, y_display + h), (0, 255, 0), 2)
+                        
+                        # Calculate center of the contour
+                        center_x = x + w//2
+                        center_y = y + h//2
+                        
+                        # Adjust center_y for display
+                        center_y_display = center_y + crop_start_y
+                        
+                        # Draw center point
+                        cv2.circle(display_image, (center_x, center_y_display), 5, (0, 0, 255), -1)
+                        
+                        # Add text labels
+                        cv2.putText(display_image, f"Object: {self.object_type}", (10, 30), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        cv2.putText(display_image, f"Size: {w}x{h}", (10, 60), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        
+                        # Centered text showing pixel count
+                        total_pixels = np.sum(color_mask > 0)
+                        cv2.putText(display_image, f"Pixels: {total_pixels}", (10, 120), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        
+                        # Center of image crosshair
+                        img_center_x = width // 2
+                        img_center_y = height // 2
+                        cv2.line(display_image, (img_center_x - 20, img_center_y), (img_center_x + 20, img_center_y), (255, 0, 0), 2)
+                        cv2.line(display_image, (img_center_x, img_center_y - 20), (img_center_x, img_center_y + 20), (255, 0, 0), 2)
+                        
+                        # Calculate error from center 
+                        error_x = center_x - img_center_x
+                        error_y = center_y_display - img_center_y
+                        cv2.putText(display_image, f"Error X: {error_x}", (10, 150), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        
+                        # Calculate proportional control
+                        turn_p = 0.003  # Adjust this value based on testing
+                        turn_speed = -turn_p * error_x
+                        
+                        # Show turn speed
+                        cv2.putText(display_image, f"Turn: {turn_speed:.2f}", (10, 180), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        
+                        # grab depth (distance) of the object
+                        depth = None
+                        try:
+                            if self.latest_depth_image is not None:
+                                depth_image = self.bridge.imgmsg_to_cv2(self.latest_depth_image, desired_encoding='passthrough')
+                                # Use the center of the detected object for depth
+                                depth = depth_image[center_y_display, center_x]
+                                rospy.loginfo("Depth: %f", depth)
+                                cv2.putText(display_image, f"Depth: {depth:.2f}m", (10, 90), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        except Exception as e:
+                            rospy.logwarn("Could not get depth information: %s", str(e))
+                        
+                        # Control logic based on object detection and depth
+                        if depth is not None and 0 < depth < 0.5:
+                            # Object is close enough to grab
+                            rospy.loginfo("Object in grabbing range. Grabbing...")
+                            
+                            # Stop the robot
+                            self.speed.linear.x = 0.0
+                            self.speed.angular.z = 0.0
+                            self.cmd_vel_pub.publish(self.speed)
+                            
+                            # Close the gripper (value of 130)
+                            self.servo_pub.publish(UInt16(130))
+                            
+                            # Wait for gripper to close
+                            rospy.sleep(1.0)
+                            
+                            # Transition to the next state based on object type
+                            if self.object_type == ObjectType.RED:
+                                self.state = State.YELLOW_ZONE
+                            else:
+                                self.state = State.DISCARD_ZONE
+                        else:
+                            # Object is still far, approach it
+                            # Calculate speed based on how far off-center the object is
+                            if abs(error_x) > 50:  # Object is significantly off-center
+                                # Turn more, move slower
+                                self.speed.angular.z = turn_speed
+                                self.speed.linear.x = 0.05  # Slow forward speed
+                            else:
+                                # Object is centered, move faster
+                                self.speed.angular.z = turn_speed * 0.5  # Gentler turning
+                                self.speed.linear.x = 0.15  # Faster forward speed
+                                
+                            self.cmd_vel_pub.publish(self.speed)
+                    else:
+                        # Contour too small, probably noise
+                        self.speed.angular.z = 0.0
+                        self.speed.linear.x = 0.0
+                        self.cmd_vel_pub.publish(self.speed)
+                else:
+                    # No contours found
+                    cv2.putText(display_image, "No contours found", (10, 210), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    self.speed.angular.z = 0.0
+                    self.speed.linear.x = 0.0
+                    self.cmd_vel_pub.publish(self.speed)
+            else:
+                # No color mask
+                cv2.putText(display_image, "No color detected", (10, 210), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                self.speed.angular.z = 0.0
+                self.speed.linear.x = 0.0
+                self.cmd_vel_pub.publish(self.speed)
             
             # Display the camera view with annotations
             cv2.imshow("Robot Vision", display_image)
