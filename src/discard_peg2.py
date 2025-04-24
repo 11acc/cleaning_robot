@@ -41,7 +41,7 @@ class SimplePegRoutine:
         rospy.loginfo("Starting simple peg routine")
 
         # 1. Turn right 90 degrees (approx. -0.5 rad/s for 3.1 sec)
-        self.turn(angular_speed=-0.5, duration=3.1)
+        self.turn(angular_speed=-0.5, duration=4)
 
         # 2. Move forward 30 cm (0.1 m/s for 3.0 sec)
         self.move(speed=0.1, duration=3.0)
@@ -53,7 +53,7 @@ class SimplePegRoutine:
         self.move(speed=-0.1, duration=3.0)
 
         # 5. Turn left 90 degrees
-        self.turn(angular_speed=0.5, duration=3.1)
+        self.turn(angular_speed=0.5, duration=4)
 
         rospy.loginfo("Routine complete")
 
