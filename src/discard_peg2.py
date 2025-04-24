@@ -6,18 +6,22 @@ from std_msgs.msg import UInt16, Float64
 
 class SimplePegRoutine:
     def __init__(self):
-        rospy.init_node('simple_peg_routine')
+        rospy.init_node('discard_peg_routine')
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.servo_pub = rospy.Publisher('/servo', UInt16, queue_size=10)
         self.servo_load_pub = rospy.Publisher('/servoLoad', Float64, queue_size=10)
         rospy.sleep(1)
+        rospy.loginfo("DiscardPegRoutine node initialized")
 
     def stop(self):
+        rospy.loginfo("Stopping robot")
         twist = Twist()
         self.cmd_vel_pub.publish(twist)
         rospy.sleep(0.5)
 
     def turn(self, angular_speed, duration):
+        direction = "right" if angular_speed < 0 else "left"
+        rospy.loginfo(f"Turning {direction} with speed {angular_speed} for {duration} seconds")
         twist = Twist()
         twist.angular.z = angular_speed
         self.cmd_vel_pub.publish(twist)
@@ -25,6 +29,8 @@ class SimplePegRoutine:
         self.stop()
 
     def move(self, speed, duration):
+        direction = "forward" if speed > 0 else "backward"
+        rospy.loginfo(f"Moving {direction} at speed {speed} for {duration} seconds")
         twist = Twist()
         twist.linear.x = speed
         self.cmd_vel_pub.publish(twist)
@@ -32,18 +38,19 @@ class SimplePegRoutine:
         self.stop()
 
     def open_gripper(self):
+        rospy.loginfo("Opening gripper")
         servo_angle = UInt16(data=0)
         self.servo_pub.publish(servo_angle)
         self.servo_load_pub.publish(Float64(data=0.5))
         rospy.sleep(1.5)
 
     def run(self):
-        rospy.loginfo("Starting simple peg routine")
+        rospy.loginfo("Starting discard peg routine")
 
-        # 1. Turn right 90 degrees (approx. -0.5 rad/s for 3.1 sec)
-        self.turn(angular_speed=-0.5, duration=3.1)
+        # 1. Turn right 90 degrees
+        self.turn(angular_speed=-0.5, duration=4)
 
-        # 2. Move forward 30 cm (0.1 m/s for 3.0 sec)
+        # 2. Move forward 30 cm
         self.move(speed=0.1, duration=3.0)
 
         # 3. Open gripper
@@ -53,7 +60,7 @@ class SimplePegRoutine:
         self.move(speed=-0.1, duration=3.0)
 
         # 5. Turn left 90 degrees
-        self.turn(angular_speed=0.5, duration=3.1)
+        self.turn(angular_speed=0.5, duration=4)
 
         rospy.loginfo("Routine complete")
 
@@ -62,4 +69,4 @@ if __name__ == '__main__':
         routine = SimplePegRoutine()
         routine.run()
     except rospy.ROSInterruptException:
-        pass
+        rospy.loginfo("ROS Interrupt - shutting down.")
