@@ -8,7 +8,6 @@ import json
 import enum
 import time
 import os
-from dotenv import load_dotenv
 from io import BytesIO
 from PIL import Image as PILImage
 from sensor_msgs.msg import Image, Range
@@ -42,11 +41,9 @@ class AIController:
         # Initialize ROS node
         rospy.init_node('ai_controller')
         rospy.loginfo("AI Controller starting...")
-        
+
         # Load environment variables and OpenAI API key
-        load_dotenv()
-        self.api_key = os.getenv('OPENAI_API_KEY', '')
-        if not self.api_key:
+        self.api_key = ""
             rospy.logwarn("No OPENAI_API_KEY found in environment variables. Vision-based decision making will be disabled.")
             
         self.api_url = "https://api.openai.com/v1/chat/completions"

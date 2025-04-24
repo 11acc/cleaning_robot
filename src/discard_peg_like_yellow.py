@@ -92,8 +92,8 @@ class PegGrabberDiscarder:
         self.upper_red2 = np.array([180, 255, 255])
 
         # Movement parameters
-        self.turn_speed = 1.5            # Angular velocity for turning (rad/s)
-        self.turn_duration = 3           # Time to complete a 90-degree turn (seconds)
+        self.turn_speed = 0.65             # Angular velocity for turning (rad/s)
+        self.turn_duration = 2.4           # Time to complete a 90-degree turn (seconds)
         
         # ---------- State Tracking Variables ----------
         self.target_pose = None          # Target position for approach (x, y)
@@ -104,8 +104,6 @@ class PegGrabberDiscarder:
 
         # Initialization message
         rospy.loginfo("PegGrabberDiscarder node started...")
-        # Open gripper just in case
-        self.open_gripper()
 
 
     # ---------- Callback Methods -----------------------------------------------------------------
@@ -204,12 +202,12 @@ class PegGrabberDiscarder:
             # Execute actions based on current state
             if self.approaching and self.target_pose is not None and self.current_pose is not None:
                 self.approach_target(cX)
-            elif self.grabbed_peg:
-                if not self.turning_to_discard:
-                    # Initiate turn
-                    self.turning_to_discard = True
-                    self.turn_start_time = rospy.Time.now().to_sec()
-                    rospy.loginfo("Beginning turn to discard")
+            # FIX: Added this condition to ensure we don't re-enter grabbed_peg state when already in discarding process
+            elif self.grabbed_peg and not self.turning_to_discard and not self.discarding and not self.turning_back:
+                # Initiate turn
+                self.turning_to_discard = True
+                self.turn_start_time = rospy.Time.now().to_sec()
+                rospy.loginfo("Beginning turn to discard")
                 self.execute_turn_to_discard()
             elif self.turning_to_discard:
                 self.execute_turn_to_discard()
@@ -310,28 +308,80 @@ class PegGrabberDiscarder:
 
     def execute_discard(self):
         """
-        Waits briefly, then opens the gripper to release the peg
-        Transitions to turning back state after discard
+        Opens the gripper to release the peg, backs up slightly to clear the peg,
+        then transitions to turning back state
         """
-        # Wait a short time before opening gripper
         current_time = rospy.Time.now().to_sec()
-        if current_time - self.discard_start_time > 1.0:  # 1 second delay
-            self.open_gripper()
+
+        # If we haven't defined our phase tracking attributes, initialize them
+        if not hasattr(self, 'discard_phase'):
+            self.discard_phase = 1
+            rospy.loginfo("Starting discard sequence")
+
+        # Phase 1: Wait before opening gripper (robot stabilization)
+        if self.discard_phase == 1:
+            if current_time - self.discard_start_time > 1.0:  # 1 second stabilization delay
+                self.open_gripper()
+                self.discard_phase = 2
+                self.gripper_opened_time = rospy.Time.now().to_sec()
+                rospy.loginfo("Opening gripper to release peg")
+
+        # Phase 2: Wait for gripper to fully open
+        elif self.discard_phase == 2:
+            if current_time - self.gripper_opened_time > 1.5:  # 1.5 second delay for gripper to open
+                self.discard_phase = 3
+                self.backup_start_time = rospy.Time.now().to_sec()
+                rospy.loginfo("Moving backward to clear peg")
+
+        # Phase 3: Back up slightly to clear the peg
+        elif self.discard_phase == 3:
+            # Apply reverse movement for a short duration
+            backup_duration = 2.0  # seconds to back up
+            backup_speed = -0.1    # negative value for backwards movement
+
+            if current_time - self.backup_start_time < backup_duration:
+                # Apply backward movement
+                self.twist.linear.x = backup_speed
+                self.twist.angular.z = 0.0
+                self.cmd_vel_pub.publish(self.twist)
+            else:
+                # Stop after backing up
+                self.stop_robot()
+                self.discard_phase = 4
+                rospy.loginfo("Backup complete, preparing to turn")
+
+        # Phase 4: Prepare for turning back
+        elif self.discard_phase == 4:
+            # Clean up our phase tracking attributes
+            delattr(self, 'discard_phase')
+            if hasattr(self, 'gripper_opened_time'):
+                delattr(self, 'gripper_opened_time')
+            if hasattr(self, 'backup_start_time'):
+                delattr(self, 'backup_start_time')
+
+            # Transition to turning back state
             self.discarding = False
             self.turning_back = True
             self.turn_start_time = rospy.Time.now().to_sec()
-            rospy.loginfo("Peg discarded, turning back")
+            rospy.loginfo("Peg fully released, turning back")
 
     def execute_turn_back(self):
         """
-        Turns the robot back 90 degrees to its original orientation
-        Completes the task when finished
+        Turns the robot back to its original orientation with improved parameters
+        to ensure a complete turn
         """
         # Calculate elapsed time since turn started
         current_time = rospy.Time.now().to_sec()
-        if current_time - self.turn_start_time < self.turn_duration:
+
+        # Increase turn duration by 25% to ensure full rotation back
+        # This compensates for potential mechanical variances or slippage
+        extended_turn_duration = self.turn_duration * 1.25
+
+        if current_time - self.turn_start_time < extended_turn_duration:
             # Turn in opposite direction of the first turn
             turn_direction = -1.0 if self.deploy_zone_position == 'left' else 1.0
+
+            # Use the same turn speed for consistency
             self.twist.linear.x = 0.0
             self.twist.angular.z = self.turn_speed * turn_direction
             self.cmd_vel_pub.publish(self.twist)
