@@ -47,13 +47,8 @@ class SimplePegRoutine:
     def run(self):
         rospy.loginfo("Starting discard peg routine")
 
-<<<<<<< HEAD
-        # 1. Turn right 90 degrees (approx. -0.5 rad/s for 3.1 sec)
-        self.turn(angular_speed=-0.5, duration=4)
-=======
         # 1. Turn right 90 degrees
         self.turn(angular_speed=-0.5, duration=5)
->>>>>>> c2034db5ec5ecad781d238fa40ad44082dd63824
 
         # 2. Move forward 30 cm
         self.move(speed=0.1, duration=5)
@@ -65,11 +60,7 @@ class SimplePegRoutine:
         self.move(speed=-0.1, duration=5)
 
         # 5. Turn left 90 degrees
-<<<<<<< HEAD
-        self.turn(angular_speed=0.5, duration=4)
-=======
         self.turn(angular_speed=0.5, duration=5)
->>>>>>> c2034db5ec5ecad781d238fa40ad44082dd63824
 
         rospy.loginfo("Routine complete")
 
