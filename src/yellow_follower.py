@@ -21,7 +21,6 @@ class YellowFollower:
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.servo_pub = rospy.Publisher('/servo', UInt16, queue_size=10)
         self.servo_load_pub = rospy.Publisher('/servoLoad', Float64, queue_size=10)
-        self.servo_load_sub = rospy.Subscriber('/servoLoad', Float64, self.servo_load_callback)
 
         self.twist = Twist()
 
@@ -32,7 +31,6 @@ class YellowFollower:
         self.returning = False
         self.completed = False
         self.recording_360 = False
-        self.gripper_closed = False #Flag for the gripper
 
         # Parameters
         self.min_contour_area = 500
@@ -54,31 +52,12 @@ class YellowFollower:
         self.start_pose = None
         self.current_pose = None
         self.target_pose = None
-        self.current_servo_load = 0.0
 
         # 360 Scan Data
         self.scan_data = []  # List to store (yaw, mask_area) pairs
         self.start_rotation_time = None
 
         rospy.loginfo("YellowFollower node started...")
-        self.check_gripper_state()#Checking the gripper State
-
-    def check_gripper_state(self):
-        # Check servo load to determine gripper state
-        if abs(self.current_servo_load - 0.8) < 0.05:
-            self.gripper_closed = True
-            rospy.loginfo("Gripper is closed (peg held), executing code...")
-        elif abs(self.current_servo_load - 0.5) < 0.05:
-            self.gripper_closed = False
-            rospy.loginfo("Gripper is open (peg released), executing code without peg held...")
-        else:
-            # Servo load is neither 0.8 nor 0.5, no peg held but code should run
-            self.gripper_closed = False
-            rospy.loginfo("No peg held (servo load different from 0.8 or 0.5), executing code...")
-        
-    def servo_load_callback(self, msg):
-        self.current_servo_load = msg.data
-        self.check_gripper_state()
 
     def odom_callback(self, msg):
         position = msg.pose.pose.position
@@ -92,8 +71,6 @@ class YellowFollower:
 
     def image_callback(self, msg):
         try:
-            rospy.loginfo_throttle(30, f"Current servo load: {self.current_servo_load:.2f}, Gripper closed: {self.gripper_closed}")
-
             if self.completed:
                 self.twist.linear.x = 0
                 self.twist.angular.z = 0
@@ -288,9 +265,7 @@ class YellowFollower:
     def open_gripper(self):
         self.servo_pub.publish(0)  # Open the gripper
         self.servo_load_pub.publish(0.0)
-        self.current_servo_load = 0.0
         rospy.loginfo("Gripper opened")
-        rospy.loginfo(f"Servo Load: {self.current_servo_load}")
 
 if __name__ == '__main__':
     try:
