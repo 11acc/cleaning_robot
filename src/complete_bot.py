@@ -72,7 +72,7 @@ class CompleteBot:
 
         self.collision_risk = False
 
-        self.state = State.YELLOW_ZONE
+        self.state = State.FOLLOW_LINE
 
         # Yellow zone related variables
         self.searching = True
@@ -207,69 +207,109 @@ class CompleteBot:
             rospy.sleep(1.5)
 
         # Actual routine steps
-        turn(angular_speed=-0.5, duration=4)   # Turn right 90°
+        turn(angular_speed=-0.5, duration=3.5)   # Turn right 90°
         move(speed=0.1, duration=3.5)            # Move forward
         open_gripper()                           # Drop object
         move(speed=-0.1, duration=3.5)           # Move backward
-        turn(angular_speed=0.5, duration=4)    # Turn left 90°
+        turn(angular_speed=0.5, duration=3.5)    # Turn left 90°
 
         rospy.loginfo("Discard routine complete")
 
     def yellow_zone(self, msg):
+        # Nested helper functions inside yellow_zone (nonlocal used where needed)
         def open_gripper():
-            rospy.loginfo("Opening gripper")
-            self.servo_pub.publish(UInt16(data=0))
-            self.servo_load_pub.publish(Float64(data=0.5))
-            rospy.sleep(1.5)
+            self.servo_pub.publish(GRIPPER_OPEN_POSITION)
+            self.servo_load_pub.publish(0.0)
+            rospy.loginfo("Gripper opened")
+
+        def find_and_set_best_target():
+            if not self.scan_data:
+                rospy.logwarn("No scan data available to find best target.")
+                return
+
+            best_yaw = max(self.scan_data, key=lambda item: item[1])[0]
+
+            distance = 1.0
+            x_robot, y_robot, _ = self.current_pose
+            target_x = x_robot + distance * math.cos(best_yaw)
+            target_y = y_robot + distance * math.sin(best_yaw)
+
+            nonlocal target_pose
+            target_pose = (target_x, target_y)
+            nonlocal searching, approaching
+            searching = False
+            approaching = True
+            rospy.loginfo(f"Best yellow zone found at yaw {best_yaw:.2f}. Target set to x={target_x:.2f}, y={target_y:.2f}")
 
         def return_to_start():
             if self.current_pose is None or self.start_pose is None:
                 rospy.logwarn_throttle(5, "Waiting for odometry data to return to start")
-                self.cmd_vel_pub.publish(Twist())
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0
+                self.cmd_vel_pub.publish(self.twist)
                 return
 
             x_cur, y_cur, yaw_cur = self.current_pose
             x_start, y_start, yaw_start = self.start_pose
             dx = x_start - x_cur
             dy = y_start - y_cur
-            dist = math.sqrt(dx**2 + dy**2)
-            angle_to_goal = math.atan2(dy, dx)
-            angle_diff = (angle_to_goal - yaw_cur + math.pi) % (2 * math.pi) - math.pi
+            distance = math.sqrt(dx * dx + dy * dy)
 
-            if dist > self.stop_distance_m:
+            angle_to_goal = math.atan2(dy, dx)
+            angle_diff = angle_to_goal - yaw_cur
+            angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
+
+            if distance > self.stop_distance_m:
                 if abs(angle_diff) > 0.05:
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0.3 if angle_diff > 0 else -0.3
                 else:
                     self.twist.linear.x = 0.1
                     self.twist.angular.z = 0
+                self.cmd_vel_pub.publish(self.twist)
+                return
+
+            yaw_diff = yaw_start - yaw_cur
+            yaw_diff = (yaw_diff + math.pi) % (2 * math.pi) - math.pi
+
+            if abs(yaw_diff) > 0.05:
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0.3 if yaw_diff > 0 else -0.3
             else:
-                yaw_diff = (yaw_start - yaw_cur + math.pi) % (2 * math.pi) - math.pi
-                if abs(yaw_diff) > 0.05:
-                    self.twist.linear.x = 0
-                    self.twist.angular.z = 0.3 if yaw_diff > 0 else -0.3
-                else:
-                    rospy.loginfo("Returned to start pose")
-                    self.twist = Twist()
-                    returning = False
-                    completed = True
+                rospy.loginfo("Returned to start pose with correct orientation - stopping")
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0
+                nonlocal returning, completed
+                returning = False
+                completed = True
             self.cmd_vel_pub.publish(self.twist)
 
-        # Load state
+        # Use nonlocal to modify outer scope variables inside nested functions
         searching = self.searching
         approaching = self.approaching
+        stopped_at_target = self.stopped_at_target
         returning = self.returning
         completed = self.completed
+        target_pose = self.target_pose
 
         try:
             if completed:
-                self.cmd_vel_pub.publish(Twist())
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0
+                self.cmd_vel_pub.publish(self.twist)
                 return
 
-            if returning:
+            if stopped_at_target and returning:
                 return_to_start()
+                # Update flags back to self
                 self.returning = returning
                 self.completed = completed
+                return
+            
+            if stopped_at_target and not returning:
+                self.twist.linear.x = 0
+                self.twist.angular.z = 0
+                self.cmd_vel_pub.publish(self.twist)
                 return
 
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -277,86 +317,106 @@ class CompleteBot:
             mask = cv2.inRange(hsv, self.lower_yellow, self.upper_yellow)
             mask = cv2.erode(mask, None, iterations=2)
             mask = cv2.dilate(mask, None, iterations=2)
-            contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            cX, cY = self.center_x, self.center_y
+            contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             mask_area = 0
+            
             if contours:
-                largest = max(contours, key=cv2.contourArea)
-                M = cv2.moments(largest)
-                if M["m00"] > 0:
+                largest_contour = max(contours, key=cv2.contourArea)
+                M = cv2.moments(largest_contour)
+                if M["m00"] != 0:
                     cX = int(M["m10"] / M["m00"])
                     cY = int(M["m01"] / M["m00"])
-                mask_area = cv2.contourArea(largest)
+                else:
+                    cX, cY = self.center_x, self.center_y
+            else:
+                cX, cY = self.center_x, self.center_y
+            
+            for contour in contours:
+                mask_area += cv2.contourArea(contour)
 
             if searching:
                 if not self.recording_360:
-                    rospy.loginfo("Starting 360 scan")
-                    self.scan_data = []
-                    self.start_rotation_time = rospy.Time.now().to_sec()
+                    rospy.loginfo("Starting 360 degree scan...")
                     self.recording_360 = True
+                    self.start_rotation_time = rospy.Time.now().to_sec()
+                    self.scan_data = []
                 else:
                     self.twist.linear.x = 0
                     self.twist.angular.z = self.search_rotation_speed
                     self.cmd_vel_pub.publish(self.twist)
 
-                    if self.current_pose:
+                    if self.current_pose is not None:
                         _, _, yaw = self.current_pose
                         self.scan_data.append((yaw, mask_area))
 
-                    if rospy.Time.now().to_sec() - self.start_rotation_time >= self.rotation_duration:
-                        best_yaw = max(self.scan_data, key=lambda x: x[1])[0]
-                        rospy.loginfo(f"Scan complete. Best yaw: {best_yaw:.2f}")
+                    time_now = rospy.Time.now().to_sec()
+                    if (time_now - self.start_rotation_time) >= self.rotation_duration:
+                        rospy.loginfo("360 degree scan complete, finding best yellow zone...")
                         self.recording_360 = False
-                        self.twist = Twist()
+                        self.twist.angular.z = 0.0
                         self.cmd_vel_pub.publish(self.twist)
-                        # Now turn to that yaw
-                        self.desired_yaw = best_yaw
-                        self.aligning = True
-                        searching = False
-                        approaching = True  # Start visual approach
+                        find_and_set_best_target()
 
-            elif approaching and not returning:
-                err = float(cX - self.center_x) / self.center_x
-                area_thresh = 15000  # Tune this value
-                twist = Twist()
+            if approaching and target_pose is not None and self.current_pose is not None:
+                x_cur, y_cur, yaw_cur = self.current_pose
+                target_x, target_y = target_pose
+                dx = target_x - x_cur
+                dy = target_y - y_cur
+                dist_to_target = math.sqrt(dx * dx + dy * dy)
+                angle_to_target = math.atan2(dy, dx)
+                angle_diff = angle_to_target - yaw_cur
+                angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
 
-                if mask_area > area_thresh:
-                    rospy.loginfo("Reached yellow zone")
-                    twist = Twist()
-                    self.cmd_vel_pub.publish(twist)
+                err_x = float(cX - self.center_x) / self.center_x
+                angle_adjust = -err_x * 0.3
+
+                if dist_to_target <= self.stop_distance_m + 0.05:
+                    rospy.loginfo("Reached target zone")
                     open_gripper()
-                    rospy.sleep(1.5)
-                    self.twist.linear.x = -0.1
-                    self.cmd_vel_pub.publish(self.twist)
-                    rospy.sleep(2.5)
-                    self.twist.angular.z = 0.4
                     self.twist.linear.x = 0
-                    self.cmd_vel_pub.publish(self.twist)
-                    rospy.sleep(2.0)
-                    self.cmd_vel_pub.publish(Twist())
-                    returning = True
+                    self.twist.angular.z = 0
                     approaching = False
+                    stopped_at_target = True
+                    returning = True
                 else:
-                    twist.linear.x = 0.08
-                    twist.angular.z = -err * 0.4
-                    self.cmd_vel_pub.publish(twist)
+                    max_speed = 0.15
+                    min_speed = 0.02
+                    slow_down_radius = 0.3
 
-            # Visualization
+                    if dist_to_target < slow_down_radius:
+                        speed = min_speed + (max_speed - min_speed) * (dist_to_target / slow_down_radius)
+                        speed = max(speed, min_speed)
+                    else:
+                        speed = max_speed
+
+                    if abs(angle_diff) > 0.05:
+                        self.twist.linear.x = 0
+                        self.twist.angular.z = 0.4 if angle_diff > 0 else -0.4
+                    else:
+                        self.twist.angular.z = angle_adjust
+                        self.twist.linear.x = speed
+
+                self.cmd_vel_pub.publish(self.twist)
+
+            # Visualization (optional)
             cv2.circle(cv_image, (cX, cY), 5, (255, 255, 255), -1)
-            cv2.imshow("Yellow View", cv_image)
-            cv2.imshow("Mask", mask)
+            cv2.imshow("Camera View - Yellow Zone", cv_image)
+            cv2.imshow("Yellow Mask", mask)
             cv2.waitKey(3)
 
-            # Save state back
+            # Update flags back to self
             self.searching = searching
             self.approaching = approaching
+            self.stopped_at_target = stopped_at_target
             self.returning = returning
             self.completed = completed
+            self.target_pose = target_pose
 
         except Exception as e:
-            rospy.logerr(f"yellow_zone error: {e}")
-            self.cmd_vel_pub.publish(Twist())
+            rospy.logerr(f"Error in yellow_zone: {e}")
+            self.twist = Twist()
+            self.cmd_vel_pub.publish(self.twist)
 
 if __name__ == '__main__':
     try:
