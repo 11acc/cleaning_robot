@@ -4,7 +4,7 @@ import rospy
 from geometry_msgs.msg import Twist
 from std_msgs.msg import UInt16, Float64
 
-class SimplePegRoutine:
+class DiscardPegRoutine:
     def __init__(self):
         rospy.init_node('discard_peg_routine')
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
