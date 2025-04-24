@@ -91,6 +91,10 @@ class PegGrabberDiscarder:
         self.lower_red2 = np.array([170, 70, 50])
         self.upper_red2 = np.array([180, 255, 255])
 
+        # HSV color thresholds for detecting dark blue pegs
+        self.lower_blue = np.array([90, 50, 50])
+        self.upper_blue = np.array([130, 255, 155])
+
         # Movement parameters
         self.turn_speed = 0.65             # Angular velocity for turning (rad/s)
         self.turn_duration = 2.4           # Time to complete a 90-degree turn (seconds)
@@ -161,42 +165,72 @@ class PegGrabberDiscarder:
             hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
             # Create mask for red color (handles HSV color space wraparound for red)
-            mask1 = cv2.inRange(hsv, self.lower_red1, self.upper_red1)
-            mask2 = cv2.inRange(hsv, self.lower_red2, self.upper_red2)
-            mask = cv2.bitwise_or(mask1, mask2)
+            mask_red1 = cv2.inRange(hsv, self.lower_red1, self.upper_red1)
+            mask_red2 = cv2.inRange(hsv, self.lower_red2, self.upper_red2)
+            mask_red = cv2.bitwise_or(mask_red1, mask_red2)
 
-            # Clean up the mask with erosion and dilation
-            mask = cv2.erode(mask, None, iterations=2)
-            mask = cv2.dilate(mask, None, iterations=2)
+            # Create mask for blue color
+            mask_blue = cv2.inRange(hsv, self.lower_blue, self.upper_blue)
+
+            # Combine masks for overall detection
+            combined_mask = cv2.bitwise_or(mask_red, mask_blue)
+
+            # Clean up the combined mask with erosion and dilation
+            processed_mask = cv2.erode(combined_mask, None, iterations=2)
+            processed_mask = cv2.dilate(processed_mask, None, iterations=2)
 
             # Find contours in the mask (potential peg objects)
-            contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(processed_mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+            # Determine which color is detected
+            detected_color = None
+            
             # Get centroid of the largest contour (if any)
             cX, cY = self.center_x, self.center_y  # Default to center
             if contours:
                 largest_contour = max(contours, key=cv2.contourArea)
-                M = cv2.moments(largest_contour)
-                if M["m00"] != 0:
-                    cX = int(M["m10"] / M["m00"])
-                    cY = int(M["m01"] / M["m00"])
+                contour_area = cv2.contourArea(largest_contour)
+                
+                # Only process if contour is large enough
+                if contour_area > self.min_contour_area:
+                    M = cv2.moments(largest_contour)
+                    if M["m00"] != 0:
+                        cX = int(M["m10"] / M["m00"])
+                        cY = int(M["m01"] / M["m00"])
+                        
+                        # Create mask of just this contour to determine color
+                        contour_mask = np.zeros_like(processed_mask)
+                        cv2.drawContours(contour_mask, [largest_contour], -1, 255, -1)
+                        
+                        # Check if contour is more in red mask or blue mask
+                        red_pixels = cv2.bitwise_and(mask_red, contour_mask)
+                        blue_pixels = cv2.bitwise_and(mask_blue, contour_mask)
+                        red_count = cv2.countNonZero(red_pixels)
+                        blue_count = cv2.countNonZero(blue_pixels)
+                        
+                        if red_count > blue_count:
+                            detected_color = "red"
+                            rospy.loginfo_throttle(1, "Red peg detected")
+                        else:
+                            detected_color = "blue"
+                            rospy.loginfo_throttle(1, "Blue peg detected")
 
-                    # Estimate target distance using contour width
-                    x, y, w, h = cv2.boundingRect(largest_contour)
-                    if w > 0:
-                        # Set target distance based on contour size
-                        distance = (self.real_peg_width_m * self.focal_length_px) / w
+                        # Estimate target distance using contour width
+                        x, y, w, h = cv2.boundingRect(largest_contour)
+                        if w > 0:
+                            # Set target distance based on contour size
+                            distance = (self.real_peg_width_m * self.focal_length_px) / w
 
-                        # Set the target pose if not already set
-                        if self.target_pose is None and self.approaching:
-                            # Set the target pose directly in front of robot
-                            if self.current_pose is not None:
-                                x_cur, y_cur, yaw_cur = self.current_pose
-                                # Target is straight ahead at calculated distance
-                                target_x = x_cur + distance * math.cos(yaw_cur)
-                                target_y = y_cur + distance * math.sin(yaw_cur)
-                                self.target_pose = (target_x, target_y)
-                                rospy.loginfo(f"Target set to x={target_x:.2f}, y={target_y:.2f}")
+                            # Set the target pose if not already set
+                            if self.target_pose is None and self.approaching:
+                                # Set the target pose directly in front of robot
+                                if self.current_pose is not None:
+                                    x_cur, y_cur, yaw_cur = self.current_pose
+                                    # Target is straight ahead at calculated distance
+                                    target_x = x_cur + distance * math.cos(yaw_cur)
+                                    target_y = y_cur + distance * math.sin(yaw_cur)
+                                    self.target_pose = (target_x, target_y)
+                                    rospy.loginfo(f"Target set to x={target_x:.2f}, y={target_y:.2f}, color={detected_color}")
 
             # ---------- State Machine Execution ----------
             # Execute actions based on current state
@@ -218,7 +252,7 @@ class PegGrabberDiscarder:
 
             # Visualization
             if cv_image is not None:
-                self.visualize(cv_image, mask, cX, cY)
+                self.visualize(cv_image, processed_mask, cX, cY)
 
         except Exception as e:
             rospy.logerr(f"Error in image_callback: {e}")
