@@ -72,7 +72,7 @@ class CompleteBot:
 
         self.collision_risk = False
 
-        self.state = State.YELLOW_ZONE
+        self.state = State.FOLLOW_LINE
 
         # Yellow zone related variables
         self.searching = True
@@ -207,11 +207,11 @@ class CompleteBot:
             rospy.sleep(1.5)
 
         # Actual routine steps
-        turn(angular_speed=-0.5, duration=4)   # Turn right 90°
+        turn(angular_speed=-0.5, duration=3.5)   # Turn right 90°
         move(speed=0.1, duration=3.5)            # Move forward
         open_gripper()                           # Drop object
         move(speed=-0.1, duration=3.5)           # Move backward
-        turn(angular_speed=0.5, duration=4)    # Turn left 90°
+        turn(angular_speed=0.5, duration=3.5)    # Turn left 90°
 
         rospy.loginfo("Discard routine complete")
 
@@ -358,21 +358,17 @@ class CompleteBot:
                         self.cmd_vel_pub.publish(self.twist)
                         find_and_set_best_target()
 
-            if approaching and target_pose is not None and self.current_pose is not None:
-                x_cur, y_cur, yaw_cur = self.current_pose
-                target_x, target_y = target_pose
-                dx = target_x - x_cur
-                dy = target_y - y_cur
-                dist_to_target = math.sqrt(dx * dx + dy * dy)
-                angle_to_target = math.atan2(dy, dx)
-                angle_diff = angle_to_target - yaw_cur
-                angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
-
+            if approaching and self.current_pose is not None:
+                # Use the centroid cX, cY for steering
                 err_x = float(cX - self.center_x) / self.center_x
-                angle_adjust = -err_x * 0.3
+                angle_adjust = -err_x * 0.3  # Proportional gain for turning
 
-                if dist_to_target <= self.stop_distance_m + 0.05:
-                    rospy.loginfo("Reached target zone")
+                # Use the area or vertical position to estimate distance to yellow zone
+                yellow_area = mask_area
+                close_enough = yellow_area > 8000 or cY > int(self.center_y * 1.5)  # Tune these values as needed
+
+                if close_enough:
+                    rospy.loginfo("Reached yellow zone (based on area or position)")
                     open_gripper()
                     self.twist.linear.x = 0
                     self.twist.angular.z = 0
@@ -380,24 +376,13 @@ class CompleteBot:
                     stopped_at_target = True
                     returning = True
                 else:
-                    max_speed = 0.15
-                    min_speed = 0.02
-                    slow_down_radius = 0.3
-
-                    if dist_to_target < slow_down_radius:
-                        speed = min_speed + (max_speed - min_speed) * (dist_to_target / slow_down_radius)
-                        speed = max(speed, min_speed)
-                    else:
-                        speed = max_speed
-
-                    if abs(angle_diff) > 0.05:
-                        self.twist.linear.x = 0
-                        self.twist.angular.z = 0.4 if angle_diff > 0 else -0.4
-                    else:
-                        self.twist.angular.z = angle_adjust
-                        self.twist.linear.x = speed
+                    # Optionally reduce speed as you get closer
+                    speed = 0.1
+                    self.twist.linear.x = speed
+                    self.twist.angular.z = angle_adjust
 
                 self.cmd_vel_pub.publish(self.twist)
+
 
             # Visualization (optional)
             cv2.circle(cv_image, (cX, cY), 5, (255, 255, 255), -1)
