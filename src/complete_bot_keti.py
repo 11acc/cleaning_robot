@@ -149,6 +149,10 @@ class CompleteBot:
         try:
             rospy.loginfo("Approaching object")
             self.current_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            
+            # Create a copy of the original image for display
+            display_image = self.current_image.copy()
+            
             # detect whether object in front is red, green or blue by counting how 
             # many pixels in the iomage are within each threshold
             red_pixels1 = cv2.inRange(self.current_image, RED_COLOR_LOWER_THRESHOLD1, RED_COLOR_UPPER_THRESHOLD1)
@@ -179,6 +183,9 @@ class CompleteBot:
                 color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_OPEN, kernel)
                 color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
                 
+                # Display the mask
+                cv2.imshow("Color Mask", color_mask)
+                
                 # Find contours for the detected color
                 contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
@@ -190,29 +197,45 @@ class CompleteBot:
                     # Get the bounding box for the largest contour
                     x, y, w, h = cv2.boundingRect(largest_contour)
                     
+                    # Draw rectangle around the detected object
+                    cv2.rectangle(display_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    
                     # Calculate center of the contour
                     center_x = x + w//2
                     center_y = y + h//2
                     
+                    # Draw center point
+                    cv2.circle(display_image, (center_x, center_y), 5, (0, 0, 255), -1)
+                    
+                    # Add text labels
+                    cv2.putText(display_image, f"Object: {self.object_type}", (10, 30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(display_image, f"Size: {w}x{h}", (10, 60), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    
                     # grab depth (distance) of the object
-                    depth_image = self.latest_depth_image
-                    depth = depth_image[center_y, center_x]
-                    rospy.loginfo("Depth: %f", depth)
-                    
-                    
+                    try:
+                        depth_image = self.bridge.imgmsg_to_cv2(self.latest_depth_image, desired_encoding='passthrough')
+                        depth = depth_image[center_y, center_x]
+                        rospy.loginfo("Depth: %f", depth)
+                        cv2.putText(display_image, f"Depth: {depth:.2f}m", (10, 90), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    except:
+                        rospy.logwarn("Could not get depth information")
+            
+            # Display the camera view with annotations
+            cv2.imshow("Robot Vision", display_image)
+            cv2.waitKey(1)  # Wait 1ms to update display
 
         except CvBridgeError as e:
             rospy.logerr(e)
     # grab the object goes here.
     def grab_object(self, msg):
-        pass
-    
-    # yellow zone goes here.
+
     def yellow_zone(self, msg):
-        pass
-    # discard the object goes here.
+
     def discard_zone(self, msg):
-        pass
+
         
         
         
