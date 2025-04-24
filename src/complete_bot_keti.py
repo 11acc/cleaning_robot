@@ -195,6 +195,7 @@ class CompleteBot:
             
             # Display the image
             cv2.imshow("Center Point", display_image)
+            cv2.waitKey(1)
             
 
         except CvBridgeError as e:

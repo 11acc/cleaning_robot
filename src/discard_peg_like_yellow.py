@@ -80,7 +80,7 @@ class PegGrabberDiscarder:
 
         # Physical parameters
         self.real_peg_width_m = 0.2      # Actual width of the peg in meters
-        self.stop_distance_m = 0.03      # Distance to stop from the peg when grabbing
+        self.stop_distance_m = 0.89      # Distance to stop from the peg when grabbing
 
         # Side of the track where the deploy zone is located
         self.deploy_zone_position = 'left'
@@ -92,8 +92,8 @@ class PegGrabberDiscarder:
         self.upper_red2 = np.array([180, 255, 255])
 
         # Movement parameters
-        self.turn_speed = 0.5            # Angular velocity for turning (rad/s)
-        self.turn_duration = 2.5         # Time to complete a 90-degree turn (seconds)
+        self.turn_speed = 1.5            # Angular velocity for turning (rad/s)
+        self.turn_duration = 3           # Time to complete a 90-degree turn (seconds)
         
         # ---------- State Tracking Variables ----------
         self.target_pose = None          # Target position for approach (x, y)
@@ -104,6 +104,8 @@ class PegGrabberDiscarder:
 
         # Initialization message
         rospy.loginfo("PegGrabberDiscarder node started...")
+        # Open gripper just in case
+        self.open_gripper()
 
 
     # ---------- Callback Methods -----------------------------------------------------------------
@@ -249,8 +251,10 @@ class PegGrabberDiscarder:
         err_x = float(cX - self.center_x) / self.center_x
         angle_adjust = -err_x * 0.3  # Proportional control coefficient
 
+        print(f"//DEBUG//  Distance: {dist_to_target}")
+
         # Check if we've reached the target
-        if dist_to_target <= self.stop_distance_m + 0.05:
+        if dist_to_target <= self.stop_distance_m:
             rospy.loginfo(f"Reached target zone at distance {dist_to_target:.2f}m")
             self.stop_robot()
             self.approaching = False

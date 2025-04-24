@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SCRIPT EXECUTION FLOW
+SCRIPT EXECUTION FLOW : discard_peg.py
 =====================
 
 Callback-Driven Execution:
@@ -75,20 +75,20 @@ class PegGrabberDiscarder:
 
         # Physical parameters
         self.real_peg_width_m = 0.2      # Actual width of the peg in meters
-        self.stop_distance_m = 0.03      # Distance to stop from the peg when grabbing
+        self.stop_distance_m = 1.2       # Distance to stop from the peg when grabbing
 
         # Side of the track where the deploy zone is located
         self.deploy_zone_position = 'left'
 
         # HSV color thresholds for detecting red pegs // to be changed probably received from global script
-        self.lower_red1 = np.array([0, 70, 50])
+        self.lower_red1 = np.array([0, 100, 150])
         self.upper_red1 = np.array([10, 255, 255])
-        self.lower_red2 = np.array([170, 70, 50])
+        self.lower_red2 = np.array([160, 100, 100])
         self.upper_red2 = np.array([180, 255, 255])
 
         # Movement parameters
-        self.turn_speed = 0.5            # Angular velocity for turning (rad/s)
-        self.turn_duration = 2.5         # Time to complete a 90-degree turn (seconds)
+        self.turn_speed = 1.5            # Angular velocity for turning (rad/s)
+        self.turn_duration = 3           # Time to complete a 90-degree turn (seconds)
 
         # ---------- State Tracking Variables ----------
         self.current_pose = None         # Current robot position and orientation
@@ -114,7 +114,7 @@ class PegGrabberDiscarder:
         """
         Commands the gripper to close (grab the peg)
         """
-        self.servo_pub.publish(170)
+        self.servo_pub.publish(130)
         self.gripper_closed = True
         rospy.loginfo("Gripper closed")
 
@@ -201,6 +201,7 @@ class PegGrabberDiscarder:
         # Get the largest contour (assuming it's the peg)
         largest_contour = max(contours, key=cv2.contourArea)
         M = cv2.moments(largest_contour)
+        contour_area = cv2.contourArea(largest_contour)
 
         # Just in case its 0 when it shouldn't be
         if M["m00"] == 0:
@@ -224,9 +225,15 @@ class PegGrabberDiscarder:
         err_x = float(cX - self.center_x) / self.center_x
         angle_adjust = -err_x * 0.3  # Proportional control coefficient
 
-        # If we're close enough to the peg, stop and grab it
-        if distance <= self.stop_distance_m + 0.05:
-            rospy.loginfo(f"Reached peg (distance: {distance:.2f}m)")
+        print(f"//DEBUG//  Distance: {distance}")
+        print(f"//DEBUG//  Contour Width: {w} pixels")
+        print(f"//DEBUG//  Contour Area: {contour_area}")
+        print(f"//DEBUG//  self.stop_distance_m: {self.stop_distance_m}")
+
+        # Multiple conditions to determine if we're close enough
+        # Either distance is below threshold OR contour is very large
+        if distance <= self.stop_distance_m or contour_area > 3000 or w > 80:
+            rospy.loginfo(f"Reached peg (distance: {distance:.2f}m, area: {contour_area}, width: {w}px)")
             self.stop_robot()
             self.approaching_peg = False
             self.grabbing_peg = True
